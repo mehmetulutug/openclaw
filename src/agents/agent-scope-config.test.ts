@@ -1,5 +1,6 @@
 // Agent scope tests cover which per-agent fields may flatten into runtime defaults.
 import { describe, expect, it, vi } from "vitest";
+import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -157,6 +158,7 @@ describe("agent roster resolution", () => {
       agents: { ownership: "explicit" as const, entries: { ops: {}, research: {} } },
     } satisfies OpenClawConfig;
 
+    retainLegacyDefaultAgentId(ownerlessFleet, "ops");
     expect(tryResolveAmbientOwnerAgentId(ownerlessFleet)).toBeUndefined();
     expect(() => resolveAmbientOwnerAgentId(ownerlessFleet)).toThrow(AgentSelectionRequiredError);
     expect(() =>
@@ -241,9 +243,18 @@ describe("agent roster resolution", () => {
           entries: { ops: { default: true }, research: {} },
         },
       };
+      retainLegacyDefaultAgentId(config, "ops");
       expect(tryResolveLegacyCompatibilityAgentId(config)).toBeUndefined();
     },
   );
+
+  it("does not designate a sole explicit agent from migration provenance", () => {
+    const config = retainLegacyDefaultAgentId(
+      { agents: { ownership: "explicit", entries: { ops: {} } } },
+      "ops",
+    );
+    expect(tryResolveLegacyCompatibilityAgentId(config)).toBeUndefined();
+  });
 
   it("prefers a per-agent toolProgressDetail over the roster default", () => {
     const defaults = { toolProgressDetail: "explain" as const };

@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { OutputRuntimeEnv } from "../runtime.js";
@@ -116,17 +117,24 @@ describe("agentsListCommand", () => {
     },
   );
 
-  it("reports no default for an explicit fleet without a recorded designation", async () => {
-    requireValidConfigMock.mockResolvedValueOnce({
-      agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
-    } satisfies OpenClawConfig);
-    const runtime = createRuntime();
-    await agentsListCommand({ json: true }, runtime);
-    expect(runtime.json[0]).toEqual([
-      expect.objectContaining({ id: "ops", isDefault: false }),
-      expect.objectContaining({ id: "research", isDefault: false }),
-    ]);
-  });
+  it.each([undefined, "ops"])(
+    "reports no default without a designation despite provenance %s",
+    async (retainedAgentId) => {
+      const config = retainLegacyDefaultAgentId(
+        {
+          agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
+        },
+        retainedAgentId,
+      );
+      requireValidConfigMock.mockResolvedValueOnce(config);
+      const runtime = createRuntime();
+      await agentsListCommand({ json: true }, runtime);
+      expect(runtime.json[0]).toEqual([
+        expect.objectContaining({ id: "ops", isDefault: false }),
+        expect.objectContaining({ id: "research", isDefault: false }),
+      ]);
+    },
+  );
 
   it("adds durable provenance to JSON without loading provider details", async () => {
     const runtime = createRuntime();

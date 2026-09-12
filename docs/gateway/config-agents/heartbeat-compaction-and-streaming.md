@@ -66,7 +66,7 @@ Selects the agent whose model and credentials own ambient OpenClaw system work: 
 }
 ```
 
-An explicit request `agentId` always wins, followed by `systemAgent.agentId`, a retained legacy default owner, and finally the sole configured agent. Delegated consults with a requesting agent keep that requester as their owner.
+An explicit request `agentId` always wins, followed by `systemAgent.agentId`, a legacy default owner when ownership is not explicit, and finally the sole configured agent. Retained migration provenance alone never designates an explicit fleet's runtime default. Delegated consults with a requesting agent keep that requester as their owner.
 
 With `agents.ownership: "explicit"`, this setting also supplies the recorded default
 for operations that support default-agent selection, including the agent-list

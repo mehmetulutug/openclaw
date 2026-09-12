@@ -288,9 +288,9 @@ export function tryResolveLegacyCompatibilityAgentId(cfg: OpenClawConfig): strin
   }
   let value: string | undefined;
   if (cfg.agents?.ownership === "explicit") {
-    // Roster migration records the default in systemAgent.agentId before retiring default:true.
+    // Migration's systemAgent.agentId is the durable default; provenance cannot designate one.
     const recorded = normalizeOptionalString(cfg.agents.defaults?.systemAgent?.agentId);
-    const agentId = recorded ? normalizeAgentId(recorded) : tryResolveLegacyDataOwnerAgentId(cfg);
+    const agentId = recorded ? normalizeAgentId(recorded) : undefined;
     value = agentId && listAgentIds(cfg).includes(agentId) ? agentId : undefined;
   } else {
     value = tryResolveLegacyDataOwnerAgentId(cfg);

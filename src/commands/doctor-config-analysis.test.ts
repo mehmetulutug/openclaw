@@ -1,6 +1,7 @@
 // Doctor config analysis tests cover schema analysis, model fallback values, and issue generation.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfiguredModelFallbacks } from "../agents/model-selection-resolve.js";
+import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { OpenClawSchema } from "../config/zod-schema.js";
@@ -8,6 +9,7 @@ import {
   formatConfigKeyPath,
   noteImplicitFallbackClobberWarnings,
   noteMcpOriginWarning,
+  noteMissingDefaultAgentOwner,
   noteOpencodeProviderOverrides,
   noteSandboxOriginProxyWarning,
   resolveConfigPathTarget,
@@ -26,6 +28,21 @@ function collectImplicitFallbackClobberWarnings(cfg: OpenClawConfig): string[] {
 }
 
 describe("doctor config analysis helpers", () => {
+  it("requires a durable default designation despite retained migration provenance", () => {
+    noteMock.mockClear();
+    const cfg = retainLegacyDefaultAgentId(
+      { agents: { ownership: "explicit", entries: { ops: {}, research: {} } } },
+      "ops",
+    );
+
+    noteMissingDefaultAgentOwner(cfg);
+
+    expect(noteMock).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining("openclaw config set agents.defaults.systemAgent.agentId <id>"),
+      "Agent ownership",
+    );
+  });
+
   it("describes OpenCode overrides against the plugin-provided catalog", () => {
     noteMock.mockClear();
 

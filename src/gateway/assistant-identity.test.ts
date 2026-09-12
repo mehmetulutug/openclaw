@@ -56,10 +56,18 @@ describe("resolveAssistantIdentity", () => {
     {
       name: "retained legacy owner",
       cfg: retainLegacyDefaultAgentId(
-        { agents: { ownership: "explicit", entries: { ops: {}, research: {} } } },
+        { agents: { entries: { ops: {}, research: {} } } },
         "research",
       ),
       expected: "research",
+    },
+    {
+      name: "first entry for undesignated explicit presentation despite provenance",
+      cfg: retainLegacyDefaultAgentId(
+        { agents: { ownership: "explicit", entries: { ops: {}, research: {} } } },
+        "research",
+      ),
+      expected: "ops",
     },
     {
       name: "normalized explicit selection",
