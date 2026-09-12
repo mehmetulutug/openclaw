@@ -16,6 +16,7 @@ import {
   resolveDefaultAgentId,
   resolveSoleAgentId,
   tryResolveAmbientOwnerAgentId,
+  tryResolveAgentOperationAgentId,
   tryResolveDefaultAgentId,
   tryResolveLegacyCompatibilityAgentId,
   tryResolveSoleAgentId,
@@ -253,6 +254,23 @@ describe("agent roster resolution", () => {
       };
       retainLegacyDefaultAgentId(config, "ops");
       expect(tryResolveLegacyCompatibilityAgentId(config)).toBeUndefined();
+      expect(tryResolveAgentOperationAgentId(config)).toBeUndefined();
+    },
+  );
+
+  it.each([undefined, "explicit"] as const)(
+    "requires explicit ownership for a designated operation owner (%s)",
+    (ownership) => {
+      const config: OpenClawConfig = {
+        agents: {
+          ownership,
+          defaults: { systemAgent: { agentId: "research" } },
+          entries: { ops: {}, research: {} },
+        },
+      };
+      expect(tryResolveAgentOperationAgentId(config)).toBe(
+        ownership === "explicit" ? "research" : undefined,
+      );
     },
   );
 

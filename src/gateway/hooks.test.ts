@@ -3,6 +3,7 @@
 import type { IncomingMessage } from "node:http";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
@@ -412,6 +413,40 @@ describe("gateway hooks helpers", () => {
     expect(resolveEffectiveHookTargetAgentId(resolved, undefined, "request")).toEqual({
       ok: true,
       effectiveAgentId: "main",
+    });
+  });
+
+  test.each([undefined, "explicit"] as const)(
+    "hook dispatch uses a recorded designation only with explicit ownership (%s)",
+    (ownership) => {
+      const resolved = resolveHooksConfigOrThrow({
+        hooks: { enabled: true, token: "synthetic-hook-token" },
+        agents: {
+          ownership,
+          defaults: { systemAgent: { agentId: "research" } },
+          entries: { ops: { default: true }, research: {} },
+        },
+      });
+      expect(resolveEffectiveHookTargetAgentId(resolved, undefined, "request")).toEqual({
+        ok: true,
+        effectiveAgentId: ownership === "explicit" ? "research" : "ops",
+      });
+    },
+  );
+
+  test("hook dispatch cannot use migration provenance as an explicit fleet default", () => {
+    const resolved = resolveHooksConfigOrThrow(
+      retainLegacyDefaultAgentId(
+        {
+          hooks: { enabled: true, token: "synthetic-hook-token" },
+          agents: { ownership: "explicit", entries: { ops: {}, research: {} } },
+        },
+        "ops",
+      ),
+    );
+    expect(resolveEffectiveHookTargetAgentId(resolved, undefined, "request")).toMatchObject({
+      ok: false,
+      code: "agent-required",
     });
   });
 
