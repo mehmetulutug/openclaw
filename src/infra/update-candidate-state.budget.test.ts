@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
 import { readUpdateStateSchemaVersions } from "./update-candidate-state.js";
+import { readUpdateStateDatabaseSizes } from "./update-candidate-state.sizes.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => vi.useRealTimers());
@@ -20,6 +21,73 @@ async function waitForFile(file: string): Promise<void> {
     });
   }
 }
+
+it.each([undefined, 600_000])(
+  "honors the %s ms allowance during metadata inventory",
+  async (timeoutMs) => {
+    const root = tempDirs.make("openclaw-metadata-budget-");
+    const file = path.join(root, "database.sqlite");
+    const ready = path.join(root, "ready");
+    const release = path.join(root, "release");
+    const preload = path.join(root, "metadata-wait.cjs");
+    await fs.writeFile(file, "database");
+    await fs.writeFile(
+      preload,
+      `
+    const fs = require("node:fs");
+    const stat = fs.statSync;
+    fs.statSync = function(file, ...args) {
+      if (file === ${JSON.stringify(file)}) {
+        fs.writeFileSync(${JSON.stringify(ready)}, "ready");
+        while (!fs.existsSync(${JSON.stringify(release)})) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+      }
+      return stat.call(this, file, ...args);
+    };
+  `,
+    );
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const controller = new AbortController();
+    const operation = readUpdateStateDatabaseSizes([file], {
+      nodeRunner: process.execPath,
+      sourceEnv: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(preload)}` },
+      stagingRoot: root,
+      timeoutMs,
+      signal: controller.signal,
+    }).then(
+      (sizes) => ({ sizes }),
+      (error: unknown) => ({ error }),
+    );
+    try {
+      await waitForFile(ready);
+      await vi.advanceTimersByTimeAsync(400_000);
+      await new Promise<void>((resolve) => {
+        realSetTimeout(resolve, 20);
+      });
+      await fs.writeFile(release, "continue");
+      await vi.advanceTimersByTimeAsync(1_000);
+      vi.useRealTimers();
+      if (timeoutMs === undefined) {
+        expect(await operation).toMatchObject({
+          error: expect.objectContaining({
+            message: expect.stringContaining("inventory failed (timeout"),
+          }),
+        });
+      } else {
+        expect(await operation).toEqual({ sizes: [{ path: file, sizeBytes: 8n }] });
+      }
+    } finally {
+      await fs.writeFile(release, "continue");
+      controller.abort();
+      if (vi.isFakeTimers()) {
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      vi.useRealTimers();
+      await operation;
+    }
+  },
+);
 
 it.each([
   { name: "slow startup", bytes: 4096, waits: [31_000], completes: true },
@@ -38,10 +106,11 @@ it.each([
     completes: true,
   },
   { name: "stalled worker", bytes: 4096, waits: [400_000], completes: false },
+  { name: "caller allowance", bytes: 4096, waits: [400_000], completes: true, timeoutMs: 600_000 },
   { name: "configured cache", bytes: 4096, waits: [0], completes: true, configuredCache: true },
 ])(
   "budgets schema inspection for $name",
-  async ({ bytes, discoveredBytes, waits, completes, configuredCache }) => {
+  async ({ bytes, discoveredBytes, waits, completes, configuredCache, timeoutMs }) => {
     const root = tempDirs.make("openclaw-state-budget-");
     const stateDir = path.join(root, "source");
     const database = path.join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
@@ -69,7 +138,14 @@ it.each([
       import { setTimeout as sleep } from "node:timers/promises";
       let input = "";
       for await (const chunk of process.stdin) input += chunk;
-      if (JSON.parse(input).mode !== "versions") throw new Error("Unexpected worker operation");
+      const request = JSON.parse(input);
+      if (request.mode === "discover") {
+        process.stdout.write(JSON.stringify({
+          files: [[${JSON.stringify(database)}, { spellings: [${JSON.stringify(database)}] }]],
+          sharedVersion: { path: path.join(request.stateDir, "state", "openclaw.sqlite"), userVersion: null },
+        }));
+      } else {
+      if (request.mode !== "versions") throw new Error("Unexpected worker operation");
       const scratch = process.env.XDG_CACHE_HOME || ${JSON.stringify(path.join(root, "scratch"))};
       await fs.mkdir(scratch, { recursive: true });
       const copy = path.join(scratch, "database.sqlite");
@@ -87,6 +163,7 @@ it.each([
         await sleep(10);
       }
       process.stdout.write(JSON.stringify([{ path: ${JSON.stringify(database)}, userVersion: 3 }]));
+      }
     `,
     );
 
@@ -96,6 +173,7 @@ it.each([
       root,
       stateDir,
       config: {},
+      timeoutMs,
       env: configuredCache ? { XDG_CACHE_HOME: cache } : {},
     }).then(
       (versions) => ({ versions }),

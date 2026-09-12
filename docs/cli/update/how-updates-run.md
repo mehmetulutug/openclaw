@@ -165,10 +165,11 @@ Subsequent updates use the new updater's measured destination selection.
 
 Schema checks also use private SQLite copies so inspection does not create or
 modify WAL sidecars beside live databases. Inspection budgets include database
-and journal sizes, cold startup, and repeated IO passes. Copy progress renews the
-watchdog, and larger caller allowances are preserved. A stalled worker is stopped
-before its private copies are removed. If compatibility cannot be verified,
-rollback is refused.
+and journal sizes, cold startup, and repeated IO passes for every discovered
+store. Metadata checks remain cancellable. Copy progress renews the watchdog,
+and larger caller allowances are preserved. Workers stop before their private
+staging is removed; cleanup failures preserve the original error. If compatibility
+cannot be verified, rollback is refused.
 
 Before stopping the previous Gateway, the updater waits for affirmative readiness.
 Its observation window uses the canary's measured startup time with headroom for

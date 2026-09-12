@@ -179,7 +179,7 @@ function writeMetadataFault(root: string, target: string, block: boolean): strin
   return preload;
 }
 
-it.each(["", "-wal", "-journal"])(
+it.each(["", "-wal", "-shm", "-journal"])(
   "keeps an unknown size when %s metadata cannot be read",
   async (suffix) => {
     const root = dirs.make("openclaw-metadata-unknown-");
@@ -196,7 +196,7 @@ it.each(["", "-wal", "-journal"])(
   },
 );
 
-it.each(["", "-wal", "-journal"])(
+it.each(["", "-wal", "-shm", "-journal"])(
   "cancels blocked %s metadata before candidate discovery and removes staging after child exit",
   async (suffix) => {
     const root = dirs.make("openclaw-metadata-cancel-");
@@ -213,7 +213,7 @@ it.each(["", "-wal", "-journal"])(
       signal: controller.signal,
       env: { ...process.env, NODE_OPTIONS: `--require ${JSON.stringify(preload)}` },
     });
-    const rejected = expect(inspection).rejects.toThrow();
+    const rejected = expect(inspection).rejects.toThrow("metadata cancellation");
     let report: { pid: number; stagingRoot: string } | undefined;
     try {
       await vi.waitFor(() => {

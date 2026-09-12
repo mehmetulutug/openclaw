@@ -57,9 +57,17 @@ export function resolveAggregateSqliteInspectionTimeoutMs(
 ): number {
   let timeoutMs = 0;
   for (const database of databases) {
-    timeoutMs += resolveSqliteInspectionBudget(operation, database.path, database.sizeBytes).timeoutMs;
+    timeoutMs += resolveSqliteInspectionBudget(
+      operation,
+      database.path,
+      database.sizeBytes,
+    ).timeoutMs;
   }
-  return resolveTimerTimeoutMs(timeoutMs, SQLITE_INSPECTION_TIMEOUT_MS, SQLITE_INSPECTION_TIMEOUT_MS);
+  return resolveTimerTimeoutMs(
+    timeoutMs,
+    SQLITE_INSPECTION_TIMEOUT_MS,
+    SQLITE_INSPECTION_TIMEOUT_MS,
+  );
 }
 
 export function readSqliteInspectionBudget(

@@ -85,8 +85,8 @@ it("sums serial size-aware schema inspection budgets without giant fixtures", ()
       { path: "large.sqlite", sizeBytes: 3_489_660_928n },
       { path: "second.sqlite", sizeBytes: 64n * 1024n * 1024n },
     ]),
-  ).toBe(166_000);
-  expect(resolveAggregateSqliteInspectionTimeoutMs("state schema inspection", [])).toBe(30_000);
+  ).toBe(4_840_000);
+  expect(resolveAggregateSqliteInspectionTimeoutMs("state schema inspection", [])).toBe(300_000);
   expect(
     resolveAggregateSqliteInspectionTimeoutMs(
       "state schema inspection",
@@ -95,16 +95,18 @@ it("sums serial size-aware schema inspection budgets without giant fixtures", ()
         sizeBytes: BigInt(Number.MAX_SAFE_INTEGER),
       })),
     ),
-  ).toBe(2_147_483_647);
+  ).toBe(MAX_TIMER_TIMEOUT_MS);
 });
 
-it("includes WAL and rollback-journal sidecars in inspection size", () => {
+it("includes WAL, SHM, and rollback-journal sidecars in inspection size", () => {
   const source = path.join(tempDirs.make("openclaw-snapshot-size-"), "source.sqlite");
   fs.writeFileSync(source, "");
   fs.writeFileSync(`${source}-wal`, "");
+  fs.writeFileSync(`${source}-shm`, "");
   fs.writeFileSync(`${source}-journal`, "");
   fs.truncateSync(source, 64 * 1024 * 1024);
   fs.truncateSync(`${source}-wal`, 3_489_660_928);
+  fs.truncateSync(`${source}-shm`, 32 * 1024 * 1024);
   fs.truncateSync(`${source}-journal`, 4 * 1024);
 
   const stagingRoot = tempDirs.make("openclaw-snapshot-size-staging-");
@@ -119,7 +121,7 @@ it("includes WAL and rollback-journal sidecars in inspection size", () => {
   });
   expect(runSqliteReadOnlyWorkerSync(source, stagingRoot)).toBe("private.sqlite");
   expect(vi.mocked(spawnSync).mock.calls[0]?.[2]).toMatchObject({
-    timeout: 137_000,
+    timeout: 4_581_000,
     killSignal: "SIGKILL",
   });
 });
