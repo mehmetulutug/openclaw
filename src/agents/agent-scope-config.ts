@@ -312,7 +312,7 @@ export function tryResolveAmbientOwnerAgentId(
   // The documented system-agent owner is explicit config, so it precedes a stripped legacy marker.
   return explicitAgentId
     ? normalizeAgentId(explicitAgentId)
-    : tryResolveLegacyCompatibilityAgentId(cfg);
+    : (tryResolveLegacyCompatibilityAgentId(cfg) ?? tryResolveSoleAgentId(cfg));
 }
 
 /** Ambient owner for surfaces that must fail loudly rather than act on the wrong agent. */

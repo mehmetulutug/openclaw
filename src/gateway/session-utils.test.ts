@@ -86,7 +86,10 @@ test("resolves fixed-store and auth compatibility owners", () => {
     {
       agents: {
         ownership: "explicit",
-        defaults: { sessionStore: { agentId: "   " } },
+        defaults: {
+          systemAgent: { agentId: "ops" },
+          sessionStore: { agentId: "   " },
+        },
         entries: { ops: {}, research: {} },
       },
       session: { mainKey: "work", store: "/tmp/openclaw-fixed-sessions.json" },
@@ -95,6 +98,12 @@ test("resolves fixed-store and auth compatibility owners", () => {
   );
   expect(resolveSessionStoreKey({ cfg, sessionKey: "incident-42" })).toBe("agent:ops:incident-42");
   const explicit = { agents: { ownership: "explicit" as const, entries: { a: {}, b: {} } } };
+  expect(() =>
+    resolveSessionStoreKey({
+      cfg: retainLegacyDefaultAgentId({ ...explicit }, "a"),
+      sessionKey: "incident-42",
+    }),
+  ).toThrowError(expect.objectContaining({ code: "AGENT_SELECTION_REQUIRED" }));
   expect(
     resolveLegacyInheritedAuthAgentId({
       ...explicit,

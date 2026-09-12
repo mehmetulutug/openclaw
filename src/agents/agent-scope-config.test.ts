@@ -133,6 +133,14 @@ describe("agent roster resolution", () => {
       expected: "solo",
     },
     {
+      name: "sole explicit agent without a default designation",
+      config: retainLegacyDefaultAgentId(
+        { agents: { ownership: "explicit", entries: { solo: {} } } },
+        "solo",
+      ),
+      expected: "solo",
+    },
+    {
       name: "explicit requested agent before every configured owner",
       config: {
         agents: {
