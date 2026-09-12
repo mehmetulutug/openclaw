@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { OpenClawSchema } from "../config/zod-schema.js";
 import {
   formatConfigKeyPath,
+  noteDoctorHookConfigWarnings,
   noteImplicitFallbackClobberWarnings,
   noteMcpOriginWarning,
   noteMissingDefaultAgentOwner,
@@ -28,6 +29,35 @@ function collectImplicitFallbackClobberWarnings(cfg: OpenClawConfig): string[] {
 }
 
 describe("doctor config analysis helpers", () => {
+  it("warns when hooks transformsDir points outside the hook transforms root", () => {
+    noteMock.mockClear();
+    noteDoctorHookConfigWarnings(
+      {
+        hooks: {
+          enabled: true,
+          token: "hook-secret",
+          transformsDir: "/virtual/.openclaw/workspace/skills/linear-webhook",
+          mappings: [
+            {
+              match: { path: "linear" },
+              action: "agent",
+              messageTemplate: "Linear event",
+              transform: { module: "./openclaw-linear-transform.js" },
+            },
+          ],
+        },
+      },
+      "/virtual/.openclaw/openclaw.json",
+    );
+
+    expect(noteMock).toHaveBeenCalledExactlyOnceWith(expect.any(String), "Doctor warnings");
+    const warning = String(noteMock.mock.calls[0]?.[0]);
+    expect(warning).toContain("hooks.transformsDir:");
+    expect(warning).toContain("/virtual/.openclaw/workspace/skills/linear-webhook");
+    expect(warning).toContain("/virtual/.openclaw/hooks/transforms");
+    expect(warning).toContain("move custom transforms there or remove hooks.transformsDir");
+  });
+
   it("requires a durable default designation despite retained migration provenance", () => {
     noteMock.mockClear();
     const cfg = retainLegacyDefaultAgentId(
