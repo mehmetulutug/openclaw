@@ -78,7 +78,9 @@ agent or `openclaw sessions --all-agents` to inspect the whole fleet. Operations
 that require explicit selection, such as `openclaw models`, keep that requirement.
 
 An ownerless multi-agent fleet has no default badge. Set a configured id with
-`openclaw config set agents.defaults.systemAgent.agentId <id>`. Ambient work
+`openclaw config set agents.defaults.systemAgent.agentId <id>`. A sole configured
+agent can still own unqualified Gateway session requests without a saved default
+designation. Ambient work
 without an owner fails with an actionable error, except queued-delivery recovery,
 which records the failing delivery and keeps draining the rest of the queue.
 Changing the runtime default does not relocate existing workspaces or legacy data.
