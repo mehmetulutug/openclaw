@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
-import path from "node:path";
+import os from "node:os";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { z } from "zod";
+import { runUtf8CommandWithTimeout } from "../process/exec.js";
 import { scheduleAbsoluteDeadline } from "../utils/absolute-deadline.js";
 import { sleep } from "../utils/sleep.js";
 import { formatDiskSpaceBytes } from "./disk-space.js";
@@ -28,36 +31,42 @@ export async function measureUpdateStateFiles(
   return { bytes, largest };
 }
 
-async function inspectCopyProgress(
-  directory: string,
-  signal: AbortSignal,
-): Promise<{ facts: string; bytes: number }> {
-  const facts: string[] = [];
+// Core-only code survives package replacement; native filesystem requests stay in this child.
+const copyProgressSource = `
+  const fs = require("node:fs"), path = require("node:path");
+  const { createHash } = require("node:crypto");
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", chunk => { input += chunk; });
+  process.stdin.on("end", () => {
+  const facts = [];
   let bytes = 0;
-  async function visit(current: string): Promise<void> {
-    signal.throwIfAborted();
-    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
-      signal.throwIfAborted();
+  function visit(current) {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const file = path.join(current, entry.name);
       try {
         if (entry.isDirectory()) {
-          await visit(file);
+          visit(file);
         } else if (entry.isFile()) {
-          const stat = await fs.stat(file);
+          const stat = fs.statSync(file);
           bytes += stat.size;
-          facts.push(`${file}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`);
+          facts.push([file, stat.size, stat.mtimeMs, stat.ctimeMs].join(":"));
         }
       } catch (error) {
-        // Completed intermediate copies can disappear while the worker advances.
-        if (!hasNodeErrorCode(error, "ENOENT")) {
-          throw error;
-        }
+        if (error.code !== "ENOENT") throw error;
       }
     }
   }
-  await visit(directory);
-  return { facts: facts.toSorted().join("\n"), bytes };
-}
+  visit(JSON.parse(input).directory);
+  process.stdout.write(JSON.stringify({
+    facts: createHash("sha256").update(facts.sort().join("\\n")).digest("hex"), bytes,
+  }));
+});
+`;
+const copyProgressSchema = z.object({
+  facts: z.string().length(64),
+  bytes: z.number().nonnegative(),
+});
 
 /** One IO watchdog for private state workers; callers retain child and scratch ownership. */
 export async function withUpdateCandidateIoBudget<T>(
@@ -67,6 +76,8 @@ export async function withUpdateCandidateIoBudget<T>(
     timeoutMs?: number;
     signal?: AbortSignal;
     operation?: "snapshot" | "inspection";
+    nodeRunner?: string;
+    env?: NodeJS.ProcessEnv;
   },
   run: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
@@ -96,12 +107,38 @@ export async function withUpdateCandidateIoBudget<T>(
       ),
     );
   let cancelDeadline = scheduleAbsoluteDeadline(deadline, expire);
-  // Deadline enforcement cannot wait for filesystem metadata, including the first scan.
-  void (async () => {
+  let probeFailure: Error | undefined;
+  const monitor = (async () => {
     try {
       while (!monitorSignal.aborted) {
-        const current = await inspectCopyProgress(params.directory, monitorSignal);
+        const probe = await runUtf8CommandWithTimeout(
+          [
+            params.nodeRunner ?? process.execPath,
+            "--input-type=commonjs",
+            "--eval",
+            copyProgressSource,
+          ],
+          {
+            cwd: os.tmpdir(),
+            baseEnv: params.env,
+            input: JSON.stringify({ directory: params.directory }),
+            signal: monitorSignal,
+            killProcessTree: true,
+            requireProcessTreeExtinction: true,
+            killSignal: "SIGKILL",
+            maxOutputBytes: { stdout: 1024, stderr: 4000 },
+          },
+        );
+        if (probe.cleanup === "uncertain") {
+          throw Object.assign(new Error("Update progress probe cleanup could not be confirmed"), {
+            cleanup: probe.cleanup,
+          });
+        }
         monitorSignal.throwIfAborted();
+        if (probe.code !== 0) {
+          throw new Error(`Update progress probe failed (${probe.termination}): ${probe.stderr}`);
+        }
+        const current = copyProgressSchema.parse(JSON.parse(probe.stdout));
         if (Date.now() >= deadline) {
           expire();
           return;
@@ -118,6 +155,12 @@ export async function withUpdateCandidateIoBudget<T>(
         await sleep(1_000, monitorSignal);
       }
     } catch (error) {
+      if (isRecord(error) && error.cleanup === "uncertain") {
+        probeFailure =
+          error instanceof Error
+            ? error
+            : new Error("Update progress probe cleanup failed", { cause: error });
+      }
       if (!monitorSignal.aborted) {
         stalled.abort(error);
       }
@@ -133,5 +176,9 @@ export async function withUpdateCandidateIoBudget<T>(
   } finally {
     finished.abort();
     cancelDeadline();
+    await monitor;
+    if (probeFailure) {
+      throw probeFailure;
+    }
   }
 }

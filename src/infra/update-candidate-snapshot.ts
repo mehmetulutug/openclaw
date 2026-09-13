@@ -175,6 +175,7 @@ export async function prepareUpdateCandidateStateSnapshot(params: {
           databaseInventory: string[];
         },
   ) => {
+    const workerEnv = params.workerEnv(directory);
     return await withUpdateCandidateIoBudget(
       {
         directory,
@@ -182,6 +183,8 @@ export async function prepareUpdateCandidateStateSnapshot(params: {
         timeoutMs: params.timeoutMs,
         signal: params.signal,
         operation: "snapshot",
+        nodeRunner: params.nodeRunner,
+        env: workerEnv,
       },
       async (signal) => {
         const result = await runCommandBuffered(
@@ -209,7 +212,7 @@ export async function prepareUpdateCandidateStateSnapshot(params: {
                 OPENCLAW_DISABLE_BUNDLED_PLUGINS: params.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS,
               },
             }),
-            baseEnv: params.workerEnv(directory),
+            baseEnv: workerEnv,
             signal,
             killGraceMs: 500,
             maxOutputBytes: { stdout: 1024 * 1024, stderr: 20_000 },

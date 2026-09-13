@@ -444,6 +444,8 @@ async function runUpdateStateInspectionWorker(params: {
         resolveAggregateSqliteInspectionTimeoutMs("state schema inspection", params.databases),
       ),
       signal: params.signal,
+      nodeRunner: params.nodeRunner,
+      env: params.sourceEnv,
     },
     (signal) =>
       runCommandBuffered(
