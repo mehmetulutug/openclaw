@@ -25,6 +25,7 @@ struct CloudflareAccessSessionStoreTests {
         }
     }
 
+    @MainActor
     private final class LoginGate {
         var count = 0
         var continuation: CheckedContinuation<CloudflareAccessSession, Error>?
