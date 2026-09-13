@@ -156,9 +156,11 @@ deferred-install activation checks.
 Updater-managed `openclaw update finalize` runs repair Doctor without an automatic
 wall-clock deadline, including post-plugin repair. It waits for completion,
 failure, or manual cancellation. An explicit `--timeout <seconds>` still limits
-each finalization phase and its child commands. Post-plugin config validation and
-readiness checks keep their separate three-minute defaults; other finalization
-phase limits are unchanged.
+each finalization phase and its child commands. Admission and config phases scale
+with shared SQLite state. Post-plugin config validation and readiness checks use
+the measured shared and agent database sizes after Doctor finishes, including WAL
+files. Serial plugin operations retain individual deadlines without a competing
+default deadline for the whole plugin phase or finalizer process.
 
 | Flag                                             | Description                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

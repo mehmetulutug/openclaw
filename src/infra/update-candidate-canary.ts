@@ -17,6 +17,7 @@ import {
   parseOpenClawSchemaVersions,
   type OpenClawSchemaVersions,
 } from "../state/openclaw-schema-versions.js";
+import { scheduleAbsoluteDeadline } from "../utils/absolute-deadline.js";
 import { hasErrnoCode } from "./errors.js";
 import { readPackageVersion } from "./package-json.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
@@ -570,6 +571,8 @@ export async function validateUpdateCandidateCanary(params: {
       "--port",
       String(port),
     ]);
+    const probeDeadline = new AbortController();
+    const cancelProbeDeadline = scheduleAbsoluteDeadline(workDeadline, () => probeDeadline.abort());
     try {
       for (const endpoint of ["startupz", "readyz"] as const) {
         phase = endpoint === "startupz" ? "startup" : "readiness";
@@ -581,11 +584,12 @@ export async function validateUpdateCandidateCanary(params: {
           try {
             const response = await fetch(`http://127.0.0.1:${port}/${endpoint}`, {
               signal: AbortSignal.any([
-                AbortSignal.timeout(Math.min(1_000, remaining())),
+                probeDeadline.signal,
                 ...(params.signal ? [params.signal] : []),
               ]),
             });
             const payload: unknown = await response.json();
+            remaining();
             if (
               response.status === 200 &&
               (endpoint === "readyz" || (isRecord(payload) && payload.status === "started"))
@@ -611,6 +615,7 @@ export async function validateUpdateCandidateCanary(params: {
       steps.push(step);
       params.onStep?.(step);
     } finally {
+      cancelProbeDeadline();
       await terminateCanary(running.child, running.closed, deadline);
     }
     return {

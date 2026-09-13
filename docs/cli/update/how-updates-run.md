@@ -123,6 +123,10 @@ reports its size and applied budget. Snapshot time does not consume the separate
 runtime validation budget. By default, that budget scales with measured database
 and plugin bytes, allowing each validation process to inspect the private state.
 An explicit per-step timeout replaces that derived runtime allowance.
+Automatic and chat updates leave that runtime allowance derived from state.
+Their request and recovery watchdogs do not become candidate validation deadlines.
+Startup and readiness responses share that validation deadline, including reading
+the response body.
 
 Before copying, the updater measures the shared and agent SQLite database
 families and the installed plugin payloads and dependency trees that the

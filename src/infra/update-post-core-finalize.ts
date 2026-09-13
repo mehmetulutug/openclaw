@@ -38,16 +38,6 @@ import {
 } from "./update-post-core-context.js";
 import type { UpdateRunResult } from "./update-runner.js";
 
-// Whole-process backstop for the finalizer. `update finalize` runs several timed
-// steps (doctor + plugin update/convergence), each bounded by its own per-step
-// `--timeout`. The outer process kill must therefore be larger than a single
-// per-step bound, or a valid multi-step run would be killed and falsely reported
-// as `post-core-plugin-finalize-failed` (blocking the restart). We use a generous
-// floor and, when a larger per-step timeout is requested, scale the outer bound
-// above it rather than reusing the per-step value as the whole-process kill.
-const FINALIZE_PROCESS_TIMEOUT_FLOOR_MS = 30 * 60_000;
-const FINALIZE_PROCESS_STEP_BUDGET_MULTIPLIER = 6;
-
 export async function readPreUpdateConfigForPostCoreFinalize(): Promise<
   PreUpdateConfigRestoreInput | undefined
 > {
@@ -107,12 +97,12 @@ type FinalizeSpawnResult = { code: number | null; stderr?: string };
 type PostCoreFinalizeSpawner = (params: {
   argv: string[];
   cwd: string;
-  timeoutMs: number;
   env: NodeJS.ProcessEnv;
 }) => Promise<FinalizeSpawnResult>;
 
-const defaultFinalizeSpawner: PostCoreFinalizeSpawner = async ({ argv, cwd, timeoutMs, env }) => {
-  const res = await runCommandWithTimeout(argv, { baseEnv: {}, cwd, timeoutMs, env });
+const defaultFinalizeSpawner: PostCoreFinalizeSpawner = async ({ argv, cwd, env }) => {
+  // The finalizer owns phase deadlines and its exit watchdog; Doctor can be unbounded.
+  const res = await runCommandWithTimeout(argv, { baseEnv: {}, cwd, env });
   return { code: res.code, ...(res.stderr ? { stderr: res.stderr } : {}) };
 };
 
@@ -177,10 +167,6 @@ export async function runPostCoreFinalizeAfterGatewayUpdate(params: {
   }
 
   const spawnFinalize = params.spawnFinalize ?? defaultFinalizeSpawner;
-  const perStepTimeoutMs =
-    typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
-      ? params.timeoutMs
-      : undefined;
   // This helper only runs for git/source updates, where `runGatewayUpdate` ran
   // the core update on `configChannel ?? DEFAULT_GIT_CHANNEL` (dev). Carry that
   // same effective channel into the finalizer so plugin convergence matches the
@@ -192,17 +178,11 @@ export async function runPostCoreFinalizeAfterGatewayUpdate(params: {
   const argv = buildFinalizeArgv({
     nodePath,
     entrypoint,
-    ...(perStepTimeoutMs === undefined ? {} : { timeoutMs: perStepTimeoutMs }),
+    timeoutMs: params.timeoutMs,
   });
   // Pin the finalizer's host-compat resolution to the just-installed core
   // version so plugins reconcile against the new core, not the running process.
   const compatHostVersion = result.after?.version ?? undefined;
-  // Outer whole-process backstop, decoupled from the per-step `--timeout` above.
-  const processTimeoutMs = Math.max(
-    FINALIZE_PROCESS_TIMEOUT_FLOOR_MS,
-    (perStepTimeoutMs ?? 0) * FINALIZE_PROCESS_STEP_BUDGET_MULTIPLIER,
-  );
-
   let sourceConfigDir: string | undefined;
   try {
     let sourceConfigPath: string | undefined;
@@ -221,7 +201,6 @@ export async function runPostCoreFinalizeAfterGatewayUpdate(params: {
     const spawnResult = await spawnFinalize({
       argv,
       cwd: path.dirname(entrypoint),
-      timeoutMs: processTimeoutMs,
       env,
     });
     if (spawnResult.code === 0) {

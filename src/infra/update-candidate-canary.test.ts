@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import * as diskSpace from "./disk-space.js";
+import { registerCanaryReadinessBudgetTests } from "./update-candidate-canary-readiness.test-support.js";
 import { validateUpdateCandidateCanary } from "./update-candidate-canary.js";
 import {
   completeCanaryCommand,
@@ -99,6 +100,7 @@ afterEach(() => {
 });
 
 describe("update candidate canary", () => {
+  registerCanaryReadinessBudgetTests(() => root);
   it("records a typed capacity refusal before notifying the snapshot failure", async () => {
     const capacity = vi.spyOn(diskSpace, "tryReadDiskSpace").mockImplementation((targetPath) => ({
       targetPath,

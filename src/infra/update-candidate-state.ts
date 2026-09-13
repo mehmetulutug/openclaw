@@ -208,6 +208,7 @@ async function withStateDatabaseSnapshot<T>(
 
 export async function collectStateDatabasePaths(
   input: StateInput,
+  options: { includeUnconfiguredAgents?: boolean } = {},
 ): Promise<Map<string, StateDatabaseDiscovery>> {
   const shared = path.resolve(input.stateDir, "state", "openclaw.sqlite");
   // Every discovery source queues one projection identity per database: with an
@@ -223,13 +224,15 @@ export async function collectStateDatabasePaths(
   };
   queue(shared);
   let directories: string[] = [];
-  try {
-    directories = (await fs.readdir(path.join(input.stateDir, "agents"), { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
-      .map((entry) => entry.name);
-  } catch (error) {
-    if (!hasNodeErrorCode(error, "ENOENT")) {
-      throw error;
+  if (options.includeUnconfiguredAgents !== false) {
+    try {
+      directories = (await fs.readdir(path.join(input.stateDir, "agents"), { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+        .map((entry) => entry.name);
+    } catch (error) {
+      if (!hasNodeErrorCode(error, "ENOENT")) {
+        throw error;
+      }
     }
   }
   const configured = Object.entries(input.config.agents?.entries ?? {});
