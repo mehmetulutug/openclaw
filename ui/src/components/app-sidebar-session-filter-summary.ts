@@ -3,6 +3,7 @@ import { readPresenceEntries, resolveCurrentSelfUser } from "../app/user-profile
 import { t } from "../i18n/index.ts";
 import type { SessionListHost } from "./app-sidebar-session-row-render.ts";
 import { icons } from "./icons.ts";
+import { renderNewSessionLink } from "./new-session-link.ts";
 import { renderSessionOwnerAvatar, sessionSelfOwner } from "./session-owner-chip.ts";
 
 /**
@@ -95,4 +96,46 @@ export function renderSidebarSessionFilter(
   >
     ${icons.listFilter}
   </button>`;
+}
+
+export function renderSessionListToolbar(host: SessionListHost) {
+  const newSessionAccess = host.readNewSessionAccess();
+  const filtered =
+    host.sessionOwnerFilterActive ||
+    host.sessionInvolvingMeFilterActive ||
+    host.sessionsStatusFilter !== "active";
+  return html`
+    <div class="sidebar-session-toolbar">
+      <span class="sidebar-recent-sessions__label-text">${t("chat.sidebar.threads")}</span>
+      ${filtered ? renderSessionFilterSummary(host) : nothing}
+      ${renderSidebarSessionFilter(host, "sidebar-session-toolbar__button")}
+      ${renderNewSessionLink({
+        basePath: host.basePath,
+        agentId: host.expandedAgentId(),
+        className: "sidebar-session-toolbar__button sidebar-new-session",
+        label: t("agentChip.newConversation"),
+        disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
+        onOpen: (agentId, target) => host.requestOpenNewSession(agentId, target),
+      })}
+    </div>
+  `;
+}
+
+/** Each list supplies settlement from its own request owner, not its sibling's cache. */
+export function renderPersonalSessionEmpty(
+  host: Pick<
+    SessionListHost,
+    "sessionsStatusFilter" | "sessionOwnerFilterActive" | "sessionInvolvingMeFilterActive"
+  >,
+  empty: boolean,
+  settled: boolean,
+) {
+  return empty &&
+    settled &&
+    host.sessionsStatusFilter === "active" &&
+    (host.sessionOwnerFilterActive || host.sessionInvolvingMeFilterActive)
+    ? html`<span class="sidebar-session-empty-hint"
+        >${t("chat.sidebar.noActiveSessionsForFilter")}</span
+      >`
+    : nothing;
 }
