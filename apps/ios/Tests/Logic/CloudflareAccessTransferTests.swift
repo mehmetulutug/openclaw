@@ -95,7 +95,8 @@ struct CloudflareAccessTransferTests {
         #expect(query["send_org_token"] == "true")
         #expect(query["edge_token_transfer"] == "true")
         #expect(query["close_interstitial"] == "true")
-        let redirect = try #require(URL(string: #require(query["redirect_url"] ?? nil)))
+        let redirectString = try #require(query["redirect_url"] ?? nil)
+        let redirect = try #require(URL(string: redirectString))
         #expect(application.origin.contains(redirect))
         #expect(CloudflareAccessTransfer.transferURL(publicKey: publicKey).host == "login.cloudflareaccess.org")
     }
