@@ -108,7 +108,7 @@ describe("agentsListCommand", () => {
         requireValidConfigMock.mockResolvedValueOnce(config);
         const runtime = createRuntime();
         await agentsListCommand({ json: true }, runtime);
-        expect(runtime.json[0]).toEqual(
+        expect(runtime.writeJson.mock.calls[0]?.[0]).toEqual(
           ["main", "research"].map((id) =>
             expect.objectContaining({ id, isDefault: id === agentId }),
           ),
@@ -129,7 +129,7 @@ describe("agentsListCommand", () => {
       requireValidConfigMock.mockResolvedValueOnce(config);
       const runtime = createRuntime();
       await agentsListCommand({ json: true }, runtime);
-      expect(runtime.json[0]).toEqual([
+      expect(runtime.writeJson.mock.calls[0]?.[0]).toEqual([
         expect.objectContaining({ id: "ops", isDefault: false }),
         expect.objectContaining({ id: "research", isDefault: false }),
       ]);
