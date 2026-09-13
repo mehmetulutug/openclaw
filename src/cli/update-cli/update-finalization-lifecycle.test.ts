@@ -45,8 +45,15 @@ it.each(["doctor", "targetConfigConvergence"] as const)(
       throw new Error("Finalization did not create its update run.");
     }
     const work = createDeferredCore();
+    const entered = createDeferredCore();
     const timerCount = vi.getTimerCount();
-    const running = withCliProcessScope(() => lifecycle.run(phase, () => work.promise));
+    const running = withCliProcessScope(() =>
+      lifecycle.run(phase, () => {
+        entered.resolve();
+        return work.promise;
+      }),
+    );
+    await entered.promise;
 
     await vi.advanceTimersByTimeAsync(240_000);
     expect(stopChildren).not.toHaveBeenCalled();
@@ -77,6 +84,24 @@ it("uses generous state and plugin budgets while preserving explicit operator bu
   }
 });
 
+it("sizes finalization state without blocking the parent on database metadata", async () => {
+  const database = resolveOpenClawStateSqlitePath(process.env);
+  fs.mkdirSync(path.dirname(database), { recursive: true });
+  fs.writeFileSync(database, "");
+  fs.truncateSync(database, 2 * 1024 ** 3);
+  const parentStat = vi.spyOn(fs, "statSync");
+  const lifecycle = new UpdateFinalizationLifecycle(false, undefined, () => {});
+  await lifecycle.run("preflight", async () => undefined);
+  expect(lifecycle.budget("preflight")).toBe(2_860_000);
+  expect(
+    parentStat.mock.calls.filter(([file]) =>
+      [database, `${database}-wal`, `${database}-shm`, `${database}-journal`].includes(
+        String(file),
+      ),
+    ),
+  ).toEqual([]);
+});
+
 it.each([
   ["preflight", 30_001],
   ["targetConfigValidation", 30_001],
@@ -98,7 +123,14 @@ it.each([
     });
     const lifecycle = new UpdateFinalizationLifecycle(false, undefined, stopChildren);
     const work = createDeferredCore();
-    const running = withCliProcessScope(() => lifecycle.run(phase, () => work.promise));
+    const entered = createDeferredCore();
+    const running = withCliProcessScope(() =>
+      lifecycle.run(phase, () => {
+        entered.resolve();
+        return work.promise;
+      }),
+    );
+    await entered.promise;
     try {
       await vi.advanceTimersByTimeAsync(elapsedMs);
       expect(stopChildren).not.toHaveBeenCalled();

@@ -1,6 +1,8 @@
 import { writeSync } from "node:fs";
+import os from "node:os";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { readSqliteInspectionBudget } from "../../infra/sqlite-readonly-worker.js";
+import { resolveAggregateSqliteInspectionTimeoutMs } from "../../infra/sqlite-readonly-worker.js";
+import { readUpdateStateDatabaseSizes } from "../../infra/update-candidate-state.sizes.js";
 import { UPDATE_RUN_ID_ENV } from "../../infra/update-control-plane-sentinel.js";
 import { UpdateDoctorError } from "../../infra/update-doctor-result.js";
 import {
@@ -57,19 +59,13 @@ export class UpdateFinalizationLifecycle {
   private deferredExitWatch?: () => void;
   completed = false;
   private active?: { phase: Phase; step: string; startedAtMs: number };
-  private readonly stateBudgetMs: number;
+  private stateBudgetMs: number | undefined;
 
   constructor(
     private readonly json: boolean,
     private readonly timeoutMs: number | undefined,
     private readonly stopChildren: () => void,
-  ) {
-    // Admission and config phases inspect shared state; Doctor owns agent migrations.
-    this.stateBudgetMs =
-      timeoutMs ??
-      readSqliteInspectionBudget("update finalization", resolveOpenClawStateSqlitePath(process.env))
-        .timeoutMs;
-  }
+  ) {}
 
   attachLedger(): void {
     this.driver = readUpdateRunDriver();
@@ -135,7 +131,8 @@ export class UpdateFinalizationLifecycle {
         ? undefined
         : phase === "plugins"
           ? UPDATE_RUNNER_TIMEOUT_MS
-          : this.stateBudgetMs);
+          : (this.stateBudgetMs ??
+            resolveAggregateSqliteInspectionTimeoutMs("update finalization", [])));
     return budgetMs === undefined ? undefined : Math.min(budgetMs, 2_147_483_647);
   }
 
@@ -144,6 +141,17 @@ export class UpdateFinalizationLifecycle {
     run: () => Promise<T>,
     outcome?: (result: T) => Outcome | { outcome: Outcome; failureFacts?: UpdateFailureFact[] },
   ): Promise<T> {
+    // Keep unresponsive source metadata inside the existing bounded worker.
+    this.stateBudgetMs ??=
+      this.timeoutMs ??
+      resolveAggregateSqliteInspectionTimeoutMs(
+        "update finalization",
+        await readUpdateStateDatabaseSizes([resolveOpenClawStateSqlitePath(process.env)], {
+          nodeRunner: process.execPath,
+          sourceEnv: { ...process.env },
+          stagingRoot: os.tmpdir(),
+        }),
+      );
     const startedAt = performance.now();
     const startedAtMs = Date.now();
     // Serial plugin operations keep their own deadlines; their total is not one step.

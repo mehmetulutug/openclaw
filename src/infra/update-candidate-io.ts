@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { scheduleAbsoluteDeadline } from "../utils/absolute-deadline.js";
 import { sleep } from "../utils/sleep.js";
 import { formatDiskSpaceBytes } from "./disk-space.js";
 import { hasNodeErrorCode } from "./path-guards.js";
@@ -27,11 +28,16 @@ export async function measureUpdateStateFiles(
   return { bytes, largest };
 }
 
-async function inspectCopyProgress(directory: string): Promise<{ facts: string; bytes: number }> {
+async function inspectCopyProgress(
+  directory: string,
+  signal: AbortSignal,
+): Promise<{ facts: string; bytes: number }> {
   const facts: string[] = [];
   let bytes = 0;
   async function visit(current: string): Promise<void> {
+    signal.throwIfAborted();
     for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+      signal.throwIfAborted();
       const file = path.join(current, entry.name);
       try {
         if (entry.isDirectory()) {
@@ -78,42 +84,54 @@ export async function withUpdateCandidateIoBudget<T>(
   let knownBytes = params.bytes;
   let budget = budgetFor(knownBytes);
   let deadline = Date.now() + budget;
-  let previous = (await inspectCopyProgress(params.directory)).facts;
+  let previous: string | undefined;
   const stalled = new AbortController();
   const finished = new AbortController();
   const signal = AbortSignal.any([stalled.signal, ...(params.signal ? [params.signal] : [])]);
-  const monitor = (async () => {
+  const monitorSignal = AbortSignal.any([signal, finished.signal]);
+  const expire = () =>
+    stalled.abort(
+      new Error(
+        `Update state ${params.operation ?? "inspection"} made no progress for ${budget / 1000} seconds (${formatDiskSpaceBytes(knownBytes)} of SQLite state). Check storage performance before retrying.`,
+      ),
+    );
+  let cancelDeadline = scheduleAbsoluteDeadline(deadline, expire);
+  // Deadline enforcement cannot wait for filesystem metadata, including the first scan.
+  void (async () => {
     try {
-      while (!finished.signal.aborted) {
-        await sleep(1_000, finished.signal);
-        const current = await inspectCopyProgress(params.directory);
-        if (current.facts !== previous) {
-          previous = current.facts;
+      while (!monitorSignal.aborted) {
+        const current = await inspectCopyProgress(params.directory, monitorSignal);
+        monitorSignal.throwIfAborted();
+        if (Date.now() >= deadline) {
+          expire();
+          return;
+        }
+        if (current.bytes > knownBytes || (previous !== undefined && current.facts !== previous)) {
           // Registered external databases may first become visible inside the worker.
           knownBytes = Math.max(knownBytes, current.bytes);
           budget = budgetFor(knownBytes);
           deadline = Date.now() + budget;
-        } else if (Date.now() >= deadline) {
-          stalled.abort(
-            new Error(
-              `Update state ${params.operation ?? "inspection"} made no progress for ${budget / 1000} seconds (${formatDiskSpaceBytes(knownBytes)} of SQLite state). Check storage performance before retrying.`,
-            ),
-          );
-          break;
+          cancelDeadline();
+          cancelDeadline = scheduleAbsoluteDeadline(deadline, expire);
         }
+        previous = current.facts;
+        await sleep(1_000, monitorSignal);
       }
     } catch (error) {
-      if (!finished.signal.aborted) {
+      if (!monitorSignal.aborted) {
         stalled.abort(error);
       }
     }
   })();
   try {
     const result = await run(signal);
+    if (Date.now() >= deadline) {
+      expire();
+    }
     signal.throwIfAborted();
     return result;
   } finally {
     finished.abort();
-    await monitor;
+    cancelDeadline();
   }
 }
