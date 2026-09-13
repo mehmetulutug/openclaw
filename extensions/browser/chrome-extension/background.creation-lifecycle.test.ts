@@ -132,6 +132,102 @@ describe("physical tab creation authority", () => {
     },
   );
 
+  it.each(["before", "after"] as const)(
+    "preserves selected navigation when the initial loading snapshot arrives %s its root commit",
+    async (eventOrder) => {
+      const h = await setup("selected");
+      await h.create();
+      await h.attach();
+      const url = "https://example.com/destination";
+      h.debuggerSendCommand.mockImplementationOnce(async () => {
+        h.updateTab(101, { pendingUrl: url }, false);
+        const initialLoadingTab = await h.tabsGet(101);
+        const loading = () =>
+          h.tabsUpdatedListener?.(101, { status: "loading" }, initialLoadingTab);
+        if (eventOrder === "before") {
+          loading();
+        }
+        h.updateTab(101, { url, pendingUrl: undefined }, false);
+        h.debuggerEventListener?.({ tabId: 101 }, "Page.frameNavigated", {
+          frame: { id: "main", loaderId: "destination", url },
+        });
+        if (eventOrder === "after") {
+          loading();
+        }
+        return { frameId: "main", loaderId: "destination" };
+      });
+      const response = await h.request({
+        type: "cdp",
+        tabId: 101,
+        method: "Page.navigate",
+        params: { url },
+      });
+      expect(response, JSON.stringify(response)).toMatchObject({
+        type: "result",
+        result: { frameId: "main", loaderId: "destination" },
+      });
+      expect(h.debuggerDetach).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "attachment replaced",
+    "explicit blank URL",
+    "different pending URL",
+    "restricted pending URL",
+    "group change",
+    "incognito",
+    "current native tab is blank",
+  ] as const)("keeps loading-snapshot authority revoked for %s", async (revocation) => {
+    const h = await setup("selected");
+    await h.create();
+    await h.attach();
+    const url = "https://example.com/destination";
+    const initialLoadingTab = { ...(await h.tabsGet(101)), pendingUrl: url };
+    h.updateTab(101, { url }, false);
+    h.debuggerEventListener?.({ tabId: 101 }, "Page.frameNavigated", {
+      frame: { id: "main", loaderId: "destination", url },
+    });
+    if (revocation === "attachment replaced") {
+      expect(await h.request({ type: "detach", tabId: 101 })).toMatchObject({ type: "result" });
+      await h.attach();
+    }
+    h.debuggerSendCommand.mockImplementationOnce(async () => {
+      const change: { status: string; url?: string; groupId?: number } = { status: "loading" };
+      const snapshot = { ...initialLoadingTab };
+      if (revocation === "explicit blank URL") {
+        change.url = "about:blank";
+      } else if (revocation === "different pending URL") {
+        snapshot.pendingUrl = "https://example.com/other";
+      } else if (revocation === "restricted pending URL") {
+        snapshot.pendingUrl = "chrome://settings";
+      } else if (revocation === "group change") {
+        change.groupId = snapshot.groupId = -1;
+        h.updateTab(101, { groupId: -1 }, false);
+      } else if (revocation === "incognito") {
+        snapshot.incognito = true;
+        h.updateTab(101, { incognito: true }, false);
+      } else if (revocation === "current native tab is blank") {
+        h.updateTab(101, { url: "about:blank" }, false);
+      }
+      h.tabsUpdatedListener?.(101, change, snapshot);
+      return { frameId: "main", loaderId: "destination" };
+    });
+    const response = await h.request({
+      type: "cdp",
+      tabId: 101,
+      method: "Page.navigate",
+      params: { url },
+    });
+    expect(response, JSON.stringify(response)).toMatchObject({
+      type: "error",
+      message: expect.stringMatching(
+        /access was revoked|restricted or unavailable|Debugger attachment retired/,
+      ),
+    });
+    expect(h.debuggerSendCommand).toHaveBeenCalledWith({ tabId: 101 }, "Page.navigate", { url });
+  });
+
   it("retires on a root document commit, but not an iframe commit", async () => {
     const h = await setup();
     await h.create();

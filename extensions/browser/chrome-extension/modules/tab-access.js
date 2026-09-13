@@ -466,7 +466,8 @@ export function createTabAccessPolicy({ chromeApi = chrome, isSelectedTab, getGr
     invalidateTab(tabId);
   }
 
-  function renewTabAccess(tabId, attachedEpoch, tab) {
+  function renewTabAccess(tabId, attachedEpoch, observedTab, change) {
+    const tab = documents.resolveTabUpdate(tabId, observedTab, change);
     const blankObservers =
       !attachedEpoch &&
       tab?.id === tabId &&

@@ -83,6 +83,7 @@ export type TabAccessPolicy = {
     tabId: number,
     attachedEpoch: TabAccessEpoch | undefined,
     tab: BrowserTabSnapshot | undefined,
+    change: { url?: string; status?: string },
   ): TabAccessEpoch | undefined;
   invalidateGroup(group?: TabGroupSnapshot, removed?: boolean): void;
   invalidateAll(): void;
