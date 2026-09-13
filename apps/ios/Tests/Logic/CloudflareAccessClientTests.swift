@@ -71,25 +71,40 @@ struct CloudflareAccessClientTests {
             self.response(origin.url, 200, headers: ["WWW-Authenticate": valid]), origin: origin))
     }
 
-    @Test func `admits sign-in only after verified same-host metadata`() async throws {
+    @Test(arguments: [
+        "/other/mcp", "/.well-known/cloudflare-access-protected-resource-spoof/mcp",
+        "/.well-known/cloudflare-access-protected-resource/mcp?redirect=other",
+        "/.well-known/cloudflare-access-protected-resource/mcp#fragment",
+    ])
+    func `rejects metadata namespace lookalikes and URL decorations`(path: String) throws {
+        let origin = try CloudflareAccessTestTokens.application().origin
+        let header = "Bearer resource_metadata=\"\(origin.url.absoluteString)\(path)\""
+        #expect(try !CloudflareAccessClient.isChallenge(
+            self.response(origin.url, 401, headers: ["WWW-Authenticate": header]), origin: origin))
+    }
+
+    @Test(arguments: ["", "/mcp", "/gateway/socket"])
+    func `admits resource-specific challenges only after verified same-host metadata`(path: String) async throws {
         let tokens = try CloudflareAccessTestTokens()
         let application = try CloudflareAccessTestTokens.application()
         let metadata = try tokens.token([
             "type": "match", "hostname": "gateway.example.test", "auth_domain": "example.cloudflareaccess.com",
             "aud": application.audience, "iat": Date().timeIntervalSince1970,
         ])
-        let challenge = "Cloudflare-Access resource_metadata=\"\(application.origin.url.absoluteString)/.well-known/cloudflare-access-protected-resource/\""
+        let gatewayURL = try #require(URL(string: application.origin.url.absoluteString + path))
+        let challenge = "Cloudflare-Access resource_metadata=\"\(application.origin.url.absoluteString)/.well-known/cloudflare-access-protected-resource\(path)\""
         let requests = try Requests([
-            (Data(), self.response(application.origin.url, 302, headers: ["WWW-Authenticate": challenge])),
-            (Data(), self.response(application.origin.url, 200, headers: ["Cf-Access-Metadata": metadata])),
+            (Data(), self.response(gatewayURL, 302, headers: ["WWW-Authenticate": challenge])),
+            (Data(), self.response(gatewayURL, 200, headers: ["Cf-Access-Metadata": metadata])),
             (tokens.jwks, self.response(application.issuer.appendingPathComponent("cdn-cgi/access/certs"), 200)),
         ])
         let client = CloudflareAccessClient(request: { request, limit in
             try await requests.send(request, maximumBytes: limit)
         })
-        #expect(try await client.discover(gatewayURL: application.origin.url) == application)
+        #expect(try await client.discover(gatewayURL: gatewayURL) == application)
         let sent = await requests.requests
         #expect(sent.map(\.httpMethod) == ["GET", "HEAD", "GET"])
+        #expect(sent.prefix(2).allSatisfy { $0.url == gatewayURL })
         #expect(sent[1].value(forHTTPHeaderField: "Cf-Access-Metadata-Request") == "true")
         #expect(sent.allSatisfy { $0.value(forHTTPHeaderField: "Cookie") == nil })
     }

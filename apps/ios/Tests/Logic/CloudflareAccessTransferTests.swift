@@ -82,6 +82,20 @@ struct CloudflareAccessTransferTests {
         }
     }
 
+    @Test(arguments: ["é", "☃", "🦊"])
+    func `rejects Unicode before the dependency decoder`(unicode: String) {
+        #expect(throws: CloudflareAccessError.self) {
+            try CloudflareAccessTransfer.appToken(
+                body: Data((unicode + self.body).utf8), servicePublicKey: self.peer, secretKey: self.secret)
+        }
+        let peer = String(self.peer.dropLast(unicode.utf8.count)) + unicode
+        #expect(peer.utf8.count == 44)
+        #expect(throws: CloudflareAccessError.self) {
+            try CloudflareAccessTransfer.appToken(
+                body: Data(self.body.utf8), servicePublicKey: peer, secretKey: self.secret)
+        }
+    }
+
     @Test func `browser URL uses the pinned encrypted transfer contract`() throws {
         let application = try CloudflareAccessTestTokens.application()
         let publicKey = "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8="

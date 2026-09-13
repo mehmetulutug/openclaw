@@ -61,14 +61,12 @@ struct CloudflareAccessClient: Sendable {
                   range: NSRange(parts[1].startIndex..., in: parts[1])),
               let range = Range(match.range(at: 1), in: parts[1]),
               let metadataURL = URL(string: String(parts[1][range])),
-              origin.contains(metadataURL), metadataURL.query == nil,
-              [
-                  "/.well-known/cloudflare-access-protected-resource",
-                  "/.well-known/cloudflare-access-protected-resource/"
-              ]
-                  .contains(metadataURL.path)
+              metadataURL.scheme?.lowercased() == "https", origin.contains(metadataURL), metadataURL.query == nil
         else { return false }
-        return true
+        // RFC 9728 puts resource paths after the namespace. This is only a
+        // challenge hint; signed metadata is still requested from the original URL.
+        let namespace = "/.well-known/cloudflare-access-protected-resource"
+        return metadataURL.path == namespace || metadataURL.path.hasPrefix(namespace + "/")
     }
 
     func verifiedSession(token: String, application: CloudflareAccessApplication) async throws

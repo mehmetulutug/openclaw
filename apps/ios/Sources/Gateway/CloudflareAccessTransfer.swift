@@ -88,6 +88,7 @@ struct CloudflareAccessTransfer: Sendable {
         // base64url for keys, but standard padded base64 for the HTTP body.
         guard body.count <= 131_072, servicePublicKey.utf8.count == 44, secretKey.count == 32,
               let encodedBody = String(data: body, encoding: .utf8),
+              self.isBase64(encodedBody, urlSafe: false), self.isBase64(servicePublicKey, urlSafe: true),
               let envelope = sodium.utils.base642bin(encodedBody, variant: .ORIGINAL),
               envelope.count >= 40,
               let peer = sodium.utils.base642bin(servicePublicKey, variant: .URLSAFE), peer.count == 32,
@@ -110,5 +111,18 @@ struct CloudflareAccessTransfer: Sendable {
         // The org token is intentionally never decoded or retained. The app
         // token still requires signature, audience and identity verification.
         return payload.appToken
+    }
+
+    private static func isBase64(_ value: String, urlSafe: Bool) -> Bool {
+        // Swift Sodium converts UTF-8 bytes with Int8.init before decoding.
+        // Admit only the wire alphabet so hostile Unicode cannot trap there.
+        value.utf8.allSatisfy { byte in
+            switch byte {
+            case 65...90, 97...122, 48...57, 61: true
+            case 45, 95: urlSafe
+            case 43, 47: !urlSafe
+            default: false
+            }
+        }
     }
 }
