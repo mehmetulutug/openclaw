@@ -341,7 +341,9 @@ it.each([false, true].flatMap((legacy) => [false, true].map((expires) => ({ lega
       return inspectionResult([sharedVersion, { path: external, userVersion: 7 }]);
     });
 
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const now = Date.now.bind(Date);
+    let elapsed = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now() + elapsed);
     const operation = readUpdateStateSchemaVersions({ stateDir, config: {} });
     const outcome = operation.then(
       (versions) => ({ versions }),
@@ -355,11 +357,15 @@ it.each([false, true].flatMap((legacy) => [false, true].map((expires) => ({ lega
         }),
       ]);
       // Modern inspection needs the external WAL bytes; legacy also needs shared's startup floor.
-      await vi.advanceTimersByTimeAsync(legacy ? 4_700_000 : 4_500_000);
+      elapsed = legacy ? 4_700_000 : 4_500_000;
       expect(signal.aborted).toBe(false);
       if (expires) {
-        await vi.advanceTimersByTimeAsync(400_000);
-        await vi.waitFor(() => expect(signal.aborted).toBe(true));
+        const aborted = new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        elapsed += 400_000;
+        await aborted;
+        expect(signal.aborted).toBe(true);
       }
       const stagingRoot = String(calls.at(-1)?.[1]?.env?.XDG_CACHE_HOME);
       expect(fsSync.existsSync(stagingRoot)).toBe(true);
@@ -419,13 +425,13 @@ it.runIf(process.platform !== "win32")(
       `#!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+// Metadata probes use the real core program; only the schema worker should hang.
+if (process.argv.includes("--eval")) {
+  process.exit(spawnSync(process.execPath, process.argv.slice(2), { stdio: "inherit" }).status ?? 1);
+}
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-// This fixture has no source databases; only the schema worker should hang.
-if (process.argv.includes("--eval")) {
-  console.log("[]");
-  process.exit(0);
-}
 const { stagingRoot } = JSON.parse(input);
 fs.mkdirSync(path.join(stagingRoot, "partial"), { recursive: true });
 fs.writeFileSync(path.join(stagingRoot, "partial", "database.sqlite"), "partial");

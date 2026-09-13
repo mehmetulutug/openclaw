@@ -31,8 +31,14 @@ vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   spawn: mocks.spawn,
 }));
-vi.mock("../process/exec.js", () => ({ runCommandBuffered: mocks.snapshot }));
-vi.mock("../process/kill-tree.js", () => ({ signalProcessTree: mocks.signal }));
+vi.mock("../process/exec.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../process/exec.js")>()),
+  runCommandBuffered: mocks.snapshot,
+}));
+vi.mock("../process/kill-tree.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../process/kill-tree.js")>()),
+  signalProcessTree: mocks.signal,
+}));
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let root: string;
@@ -47,6 +53,10 @@ let runtimeContract: unknown;
 let lintReport: { ok: boolean; checksRun: number; findings: unknown[]; warnings: unknown[] };
 let databasePath: string | undefined;
 
+function canaryStateOptions() {
+  return { root, stateDir: root, config: {}, env: {} };
+}
+
 beforeEach(async () => {
   vi.clearAllMocks();
   pluginErrors = false;
@@ -56,10 +66,8 @@ beforeEach(async () => {
   lintReport = { ok: true, checksRun: 1, findings: [], warnings: [] };
   databasePath = undefined;
   root = path.join(await fs.realpath(tempDirs.make("canary-unit-")), "candidate");
-  await fs.mkdir(root);
-  await fs.mkdir(path.join(root, "dist"));
+  await fs.mkdir(path.join(root, "dist", "infra"), { recursive: true });
   await fs.writeFile(path.join(root, "dist", "index.js"), "");
-  await fs.mkdir(path.join(root, "dist", "infra"));
   await fs.writeFile(path.join(root, "dist", "infra", "update-migrated-finalize.worker.js"), "");
   await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ version: "2026.9.1" }));
   mocks.snapshot.mockImplementation(async (_command, options: { input: string }) =>
@@ -205,10 +213,7 @@ describe("update candidate canary", () => {
     });
     try {
       const result = await validateUpdateCandidateCanary({
-        root,
-        stateDir: root,
-        config: {},
-        env: {},
+        ...canaryStateOptions(),
         timeoutMs: 1_000,
       });
       expect(result).toMatchObject({ status: "error", phase: "doctor" });
@@ -221,6 +226,9 @@ describe("update candidate canary", () => {
   });
 
   it("preserves the runtime validation budget after a snapshot exceeds five minutes", async () => {
+    databasePath = path.join(root, "snapshot-budget.sqlite");
+    await fs.writeFile(databasePath, "");
+    await fs.truncate(databasePath, 32 * 1024 ** 2);
     const now = Date.now.bind(Date);
     let snapshotElapsed = 0;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + snapshotElapsed);
@@ -235,10 +243,7 @@ describe("update candidate canary", () => {
     stubHealthyGateway();
     try {
       const result = await validateUpdateCandidateCanary({
-        root,
-        stateDir: root,
-        config: {},
-        env: {},
+        ...canaryStateOptions(),
         timeoutMs: 30_000,
       });
       expect(result, result.logTail.join("\n")).toMatchObject({ status: "ok", phase: "readiness" });
@@ -281,10 +286,7 @@ describe("update candidate canary", () => {
       stubHealthyGateway();
       try {
         const result = await validateUpdateCandidateCanary({
-          root,
-          stateDir: root,
-          config: {},
-          env: {},
+          ...canaryStateOptions(),
           timeoutMs,
         });
         expect(result.steps[0]?.snapshotCapacity?.sqliteBytes).toBe(sqliteBytes);

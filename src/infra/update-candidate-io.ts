@@ -166,19 +166,25 @@ export async function withUpdateCandidateIoBudget<T>(
       }
     }
   })();
+  let outcome: { value: T } | { error: unknown };
   try {
-    const result = await run(signal);
-    if (Date.now() >= deadline) {
-      expire();
-    }
-    signal.throwIfAborted();
-    return result;
-  } finally {
-    finished.abort();
-    cancelDeadline();
-    await monitor;
-    if (probeFailure) {
-      throw probeFailure;
-    }
+    outcome = { value: await run(signal) };
+  } catch (error) {
+    outcome = { error };
   }
+  if (Date.now() >= deadline) {
+    expire();
+  }
+  finished.abort();
+  cancelDeadline();
+  await monitor;
+  // Uncertain probe cleanup outranks both worker results and caller cancellation.
+  if (probeFailure) {
+    throw probeFailure;
+  }
+  if ("error" in outcome) {
+    throw outcome.error;
+  }
+  signal.throwIfAborted();
+  return outcome.value;
 }

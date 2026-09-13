@@ -404,7 +404,8 @@ vi.mock("node:child_process", async () => {
   };
 });
 
-vi.mock("../process/exec.js", async () => {
+vi.mock("../process/exec.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../process/exec.js")>();
   const { spawn: spawnChild, spawnSync: spawnMetadata } =
     await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
@@ -480,7 +481,7 @@ vi.mock("../process/exec.js", async () => {
         expect(code).toBe(0);
       }
     },
-    runUtf8CommandWithTimeout: vi.fn(),
+    runUtf8CommandWithTimeout: vi.fn(actual.runUtf8CommandWithTimeout),
     runExec: vi.fn(async () => ({
       stdout: new Date(Date.now() - 1000).toString(),
       stderr: "",

@@ -1,14 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as realSetTimeout } from "node:timers";
+import { setImmediate, setTimeout as realSetTimeout } from "node:timers";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import * as commands from "../process/exec.js";
 import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
 import { readUpdateStateSchemaVersions } from "./update-candidate-state.js";
 import { readUpdateStateDatabaseSizes } from "./update-candidate-state.sizes.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 async function waitForFile(file: string): Promise<void> {
   const started = performance.now();
@@ -167,7 +172,31 @@ it.each([
     `,
     );
 
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const now = Date.now.bind(Date);
+    let elapsed = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now() + elapsed);
+    let observedBytes = -1;
+    const probe = commands.runUtf8CommandWithTimeout;
+    vi.spyOn(commands, "runUtf8CommandWithTimeout").mockImplementation(async (...args) => {
+      const result = await probe(...args);
+      if (result.code === 0) {
+        const measurement: unknown = JSON.parse(result.stdout);
+        if (isRecord(measurement) && typeof measurement.bytes === "number") {
+          const measuredBytes = measurement.bytes;
+          // Observe after the watchdog has consumed this real probe result.
+          setImmediate(() => {
+            observedBytes = Math.max(observedBytes, measuredBytes);
+          });
+        }
+      }
+      return result;
+    });
+    const waitForObservation = async (expectedBytes: number) => {
+      await vi.waitFor(() => expect(observedBytes).toBeGreaterThanOrEqual(expectedBytes), {
+        timeout: 5_000,
+        interval: 10,
+      });
+    };
     let failed = false;
     const result = readUpdateStateSchemaVersions({
       root,
@@ -190,32 +219,21 @@ it.each([
         expect(path.isAbsolute(relative)).toBe(false);
         expect(relative.split(path.sep)[0]).not.toBe("..");
       }
-      await vi.advanceTimersByTimeAsync(2_000);
-      await new Promise<void>((resolve) => {
-        realSetTimeout(resolve, 20);
-      });
+      await waitForObservation(discoveredBytes ?? 4);
       for (const [index, milliseconds] of waits.entries()) {
-        await vi.advanceTimersByTimeAsync(milliseconds);
-        await new Promise<void>((resolve) => {
-          realSetTimeout(resolve, 20);
-        });
+        elapsed += milliseconds;
         if (failed) {
           break;
         }
         if (index < waits.length - 1) {
           await fs.writeFile(progress, String(index + 1));
           await waitForFile(`${progress}.${index + 1}`);
-          await vi.advanceTimersByTimeAsync(1_000);
-          await new Promise<void>((resolve) => {
-            realSetTimeout(resolve, 20);
-          });
+          await waitForObservation(4 + index + 1);
         }
       }
     } finally {
       await fs.writeFile(release, "done");
       // Join the real process and its pipes before the fixture owner removes files.
-      await vi.advanceTimersByTimeAsync(1_000);
-      vi.useRealTimers();
       await result;
     }
     if (completes) {
