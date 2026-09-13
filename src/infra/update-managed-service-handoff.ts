@@ -443,7 +443,7 @@ async function finishManagedUpdateRun() {
     if (Buffer.byteLength(payload) > 64 * 1024) throw new Error("managed update terminal result exceeds the command payload limit");
     const exit = await runOwnedUpdateCommand("finalize", [process.execPath, "--input-type=module", "-e",
       'import { pathToFileURL } from "node:url"; const [modulePath, runId, result] = JSON.parse(process.argv[1]); const { finishUpdateRun } = await import(pathToFileURL(modulePath).href); finishUpdateRun(runId, result);',
-      payload], Math.min(params.recoveryTimeoutMs, 60_000));
+      payload], params.recoveryTimeoutMs);
     if (exit.signal || exit.code !== 0) throw new Error("installed runtime could not finalize the update run");
   }
   runOutcome = undefined;
@@ -1978,6 +1978,7 @@ type ManagedServiceUpdateHandoffParams = {
   beforePark?: () => Promise<void>;
   root: string;
   timeoutMs?: number;
+  recoveryTimeoutMs?: number;
   restartDrainTimeoutMs: number;
   restartDelayMs?: number;
   channel?: UpdateChannel;
@@ -2321,7 +2322,7 @@ async function spawnManagedServiceUpdateHandoff(
     sensitivePaths: [scriptPath, paramsPath, metaPath, triageInputPath],
     serviceRecovery: resolveGatewayServiceRecovery(params.supervisor, serviceEnv),
     recovery: await ((await looksLikeGitCheckout(rootIdentity))
-      ? readCurrentGitUpdateRecovery(rootIdentity)
+      ? readCurrentGitUpdateRecovery(rootIdentity, owner.recoveryTimeoutMs)
       : verifyPackageUpdateRecovery(rootIdentity)),
     recoveryModulePath: path.join(rootIdentity, "dist", "cli", "daemon-cli.js"),
   };
@@ -2514,7 +2515,7 @@ export async function startManagedServiceUpdateHandoff(
   }
   const owner: ActiveManagedServiceUpdateHandoff = {
     handoffId: params.handoffId ?? randomUUID(),
-    recoveryTimeoutMs: params.timeoutMs ?? 30 * 60_000,
+    recoveryTimeoutMs: params.recoveryTimeoutMs ?? params.timeoutMs ?? 30 * 60_000,
     parentExitTimeoutMs: Math.min(
       2_147_483_647,
       Math.max(0, params.restartDrainTimeoutMs) + PARENT_EXIT_SHUTDOWN_RESERVE_MS,

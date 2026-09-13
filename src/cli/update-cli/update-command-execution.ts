@@ -187,7 +187,7 @@ export async function executeMutableUpdate(
     });
   const originalRecovery = () =>
     params.installKind === "git"
-      ? readCurrentGitUpdateRecovery(params.root)
+      ? readCurrentGitUpdateRecovery(params.root, updateStepTimeoutMs)
       : verifyPackageUpdateRecovery(params.root);
   const gitMutationRoots =
     params.updateInstallKind === "git"

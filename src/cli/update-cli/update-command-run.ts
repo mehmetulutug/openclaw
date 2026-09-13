@@ -54,6 +54,7 @@ import type { UpdateRunRecord, UpdateRunStep } from "../../infra/update-run-reco
 import { assertUpdateRecoveryAdmission } from "../../infra/update-run-recovery-admission.js";
 import { inspectUpdateRecoveries, loadUpdateRecovery } from "../../infra/update-run-recovery.js";
 import { updateRunStepsFromResultStep } from "../../infra/update-run-step.js";
+import { AUTO_UPDATE_STEP_TIMEOUT_MS } from "../../infra/update-run-timeouts.js";
 import type { UpdateRunResult, UpdateStepProgress } from "../../infra/update-runner.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
@@ -231,7 +232,12 @@ export async function admitUpdateCommandRun(params: {
   const requesterAuthority = requester
     ? await createManagedUpdateRequesterAuthority(requester, env)
     : undefined;
-  const run = { runId: record.runId, env, ...(requesterAuthority ? { requesterAuthority } : {}) };
+  const run = {
+    runId: record.runId,
+    defaultStepTimeoutMs: record.trigger === "campaign" ? AUTO_UPDATE_STEP_TIMEOUT_MS : undefined,
+    env,
+    ...(requesterAuthority ? { requesterAuthority } : {}),
+  };
   if (
     !env[UPDATE_RUN_ID_ENV] &&
     env.OPENCLAW_UPDATE_RUN_HANDOFF !== "1" &&
@@ -517,7 +523,7 @@ export async function prepareUpdateCommand(opts: UpdateCommandOptions) {
   // The shim can move during preparation; the loaded module owns the executing generation.
   const executingRoot = resolveOpenClawPackageRootSync({ moduleUrl: import.meta.url });
   const discoveredRoot = await resolveUpdateRoot();
-  const installKind = await resolveUpdateInstallKind(discoveredRoot);
+  const installKind = await resolveUpdateInstallKind(discoveredRoot, { timeoutMs });
   // A post-core marker cannot bypass pending recovery without the live original
   // owner. Check both roots before config/autostart preparation or history.
   assertUpdatePackageActivationAdmission(discoveredRoot, {

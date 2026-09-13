@@ -314,7 +314,10 @@ export async function maybeOfferUpdateBeforeDoctor(params: {
               candidateSchemaVersions = target.schemaVersions;
               if (serviceLifecycle) {
                 // A native stop can mutate before preparation returns or Git starts.
-                originalRecovery = await readCurrentGitUpdateRecovery(updateRoot);
+                originalRecovery = await readCurrentGitUpdateRecovery(
+                  updateRoot,
+                  UPDATE_RUNNER_TIMEOUT_MS,
+                );
                 assertCurrent();
                 const previousSkip = inspection?.serviceMutationSkipMessage;
                 inspection = await serviceLifecycle.maybeStopManagedServiceBeforeMutableUpdate({

@@ -151,7 +151,7 @@ export async function continueMigratedUpdateInFreshProcess(
         cwd: root,
         baseEnv: {},
         env: workerEnv,
-        timeoutMs: 30_000,
+        timeoutMs: params.updateStepTimeoutMs,
         killProcessTree: true,
         requireProcessTreeExtinction: true,
         killGraceMs: 500,

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { runCommandWithTimeout } from "../process/exec.js";
 import { detectPackageManager as detectPackageManagerImpl } from "./detect-package-manager.js";
-import { executeGitCommand } from "./git-exec.js";
+import { createGitCommandError, executeGitCommand } from "./git-exec.js";
 import { compareOpenClawReleaseVersions } from "./npm-registry-spec.js";
 import { compareValidSemver, normalizeLegacyDotBetaVersion } from "./semver.js";
 import {
@@ -22,6 +22,7 @@ import { detectGlobalInstallManagerForRoot } from "./update-global.js";
 import { updateInstallRootsMatch } from "./update-install-root.js";
 import { UPDATE_NETWORK_TIMEOUT_MS } from "./update-network-budget.js";
 import type { UpdateFetchFailure } from "./update-run-record.js";
+import { UPDATE_RUNNER_TIMEOUT_MS } from "./update-run-timeouts.js";
 
 type PackageManager = "pnpm" | "bun" | "npm" | "unknown";
 type GitUpdateOptions = { timeoutMs?: number; signal?: AbortSignal };
@@ -212,7 +213,7 @@ async function detectPackageManager(root: string): Promise<PackageManager> {
 /** Classify installation ownership without reading Git history or dependency state. */
 export async function resolveUpdateInstallKind(
   root: string | null,
-  options: Pick<GitUpdateOptions, "signal"> = {},
+  options: GitUpdateOptions = {},
 ): Promise<"git" | "package" | "unknown"> {
   options.signal?.throwIfAborted();
   if (!root) {
@@ -220,9 +221,13 @@ export async function resolveUpdateInstallKind(
   }
   const result = await runUpdateGitCommand(root, ["rev-parse", "--show-toplevel"], {
     signal: options.signal,
-    timeoutMs: 4000,
+    timeoutMs: options.timeoutMs ?? UPDATE_RUNNER_TIMEOUT_MS,
   });
   options.signal?.throwIfAborted();
+  if (result?.termination === "timeout") {
+    // An expired probe does not establish that this root is a package installation.
+    throw createGitCommandError("git rev-parse --show-toplevel", result);
+  }
   const gitRoot = result?.code === 0 ? result.stdout.trim() : "";
   return gitRoot && updateInstallRootsMatch(gitRoot, root) ? "git" : "package";
 }
@@ -633,7 +638,10 @@ export async function checkUpdateStatus(params: {
     };
   }
 
-  const installKind = await resolveUpdateInstallKind(root, { signal: params.signal });
+  const installKind = await resolveUpdateInstallKind(root, {
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
+  });
   const isGit = installKind === "git";
   const packageManager = isGit
     ? await detectPackageManager(root)

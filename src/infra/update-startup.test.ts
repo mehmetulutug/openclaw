@@ -60,7 +60,7 @@ const {
   >(async () => ({
     status: "started" as const,
     pid: 12345,
-    command: "openclaw update --yes --channel beta --timeout 2700",
+    command: "openclaw update --yes --channel beta",
     logPath: "/tmp/openclaw-handoff.log",
     handoffId: "auto-handoff-id",
     installRoot: "/opt/openclaw",
@@ -303,7 +303,7 @@ describe("update-startup", () => {
     startManagedServiceUpdateHandoffMock.mockResolvedValue({
       status: "started",
       pid: 12345,
-      command: "openclaw update --yes --channel beta --timeout 2700",
+      command: "openclaw update --yes --channel beta",
       logPath: "/tmp/openclaw-handoff.log",
       handoffId: "auto-handoff-id",
       installRoot: "/opt/openclaw",
@@ -1354,6 +1354,7 @@ describe("update-startup", () => {
       upstreamRef: "origin/main",
       upstreamSha: "frozen-upstream-sha",
     });
+    expect(handoffParams?.timeoutMs).toBeUndefined();
     expect(runGatewayUpdatePreflightMock).toHaveBeenCalledWith(
       "/opt/openclaw",
       45 * 60 * 1000,
@@ -2649,7 +2650,7 @@ describe("update-startup", () => {
       kind: "update",
       status: "skipped",
       message: expect.stringMatching(
-        /Stop the foreground Gateway.*`openclaw --profile work update --yes --channel beta --tag 2\.0\.0-beta\.1 --timeout 2700`.*then launch the Gateway again/s,
+        /Stop the foreground Gateway.*`openclaw --profile work update --yes --channel beta --tag 2\.0\.0-beta\.1`.*then launch the Gateway again/s,
       ),
       stats: { reason: "managed-service-handoff-unavailable" },
     });
@@ -2666,7 +2667,7 @@ describe("update-startup", () => {
     startManagedServiceUpdateHandoffMock.mockResolvedValueOnce({
       status: "started",
       pid: 12345,
-      command: "openclaw update --yes --channel beta --tag 2.0.0-beta.1 --timeout 2700",
+      command: "openclaw update --yes --channel beta --tag 2.0.0-beta.1",
       logPath: "/tmp/openclaw-handoff.log",
       handoffId: "started-auto-handoff-id",
       installRoot: await fs.realpath(installRoot),
@@ -2686,7 +2687,7 @@ describe("update-startup", () => {
     expect(startManagedServiceUpdateHandoffMock).toHaveBeenCalledWith(
       expect.objectContaining({
         root: installOwner,
-        timeoutMs: 45 * 60 * 1000,
+        recoveryTimeoutMs: 45 * 60 * 1000,
         restartDrainTimeoutMs: 300_000,
         channel: "beta",
         tag: "2.0.0-beta.1",
@@ -2700,6 +2701,7 @@ describe("update-startup", () => {
       }),
     );
     const [handoffParams] = startManagedServiceUpdateHandoffMock.mock.calls[0] ?? [];
+    expect(handoffParams?.timeoutMs).toBeUndefined();
     expect(handoffParams?.meta?.handoffId).toBe(handoffParams?.handoffId);
     expect(transferManagedServiceUpdateHandoffMock).toHaveBeenCalledExactlyOnceWith({
       kind: "managed-update-handoff",
@@ -2721,7 +2723,7 @@ describe("update-startup", () => {
       version: "2.0.0-beta.1",
       tag: "beta",
       forced: false,
-      command: "openclaw update --yes --channel beta --tag 2.0.0-beta.1 --timeout 2700",
+      command: "openclaw update --yes --channel beta --tag 2.0.0-beta.1",
       logPath: "/tmp/openclaw-handoff.log",
     });
     expect(getUpdateSchedule()?.campaign?.state).toBe("applying");
@@ -2805,7 +2807,7 @@ describe("update-startup", () => {
     startManagedServiceUpdateHandoffMock.mockResolvedValueOnce({
       status: "joined",
       pid: 12345,
-      command: "openclaw update --yes --channel beta --timeout 2700",
+      command: "openclaw update --yes --channel beta",
       logPath: "/tmp/openclaw-handoff.log",
       handoffId: "handoff-existing",
     });
@@ -2876,7 +2878,7 @@ describe("update-startup", () => {
     expect(startManagedServiceUpdateHandoffMock).toHaveBeenCalledWith(
       expect.objectContaining({
         root: "/opt/openclaw",
-        timeoutMs: 45 * 60 * 1000,
+        recoveryTimeoutMs: 45 * 60 * 1000,
         restartDrainTimeoutMs: 300_000,
         channel: "beta",
         tag: "2.0.0-beta.1",

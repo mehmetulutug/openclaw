@@ -405,13 +405,30 @@ vi.mock("node:child_process", async () => {
 });
 
 vi.mock("../process/exec.js", async () => {
-  const { spawn: spawnChild } =
+  const { spawn: spawnChild, spawnSync: spawnMetadata } =
     await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
     // The real snapshot worker has separate WAL/source-inode boundary coverage.
     // Retain real rehearsal config projection and drift checks in this CLI fixture.
-    runCommandBuffered: async (_argv: string[], options: { input: string }) => {
+    runCommandBuffered: async (argv: string[], options: { input: string; timeoutMs?: number }) => {
       const input: unknown = JSON.parse(options.input);
+      if (isRecord(input) && input.mode === undefined && Array.isArray(input.files)) {
+        // Keep budget metadata real; only snapshot mutation is simulated below.
+        const metadata = spawnMetadata(
+          expectDefined(argv[0], "metadata executable"),
+          argv.slice(1),
+          {
+            input: options.input,
+            timeout: options.timeoutMs,
+            cwd: commandTransport.hostCwd,
+            env: commandTransport.hostEnv,
+          },
+        );
+        if (metadata.error) {
+          throw metadata.error;
+        }
+        return { code: metadata.status, stdout: metadata.stdout, stderr: metadata.stderr };
+      }
       const mode = isRecord(input) ? input.mode : undefined;
       if (mode !== "inventory" && mode !== "snapshot") {
         throw new Error("Unexpected update state worker mode");
@@ -3259,7 +3276,14 @@ describe("update-cli", () => {
     await updateCommand({ json: true, restart: false });
 
     const call = spawnCall();
-    expect(call?.[1]).toEqual([entrypoints[0], "update", "--json", "--no-restart"]);
+    expect(call?.[1]).toEqual([
+      entrypoints[0],
+      "update",
+      "--json",
+      "--no-restart",
+      "--timeout",
+      "1800",
+    ]);
     expect(call?.[2]?.stdio).toBe("pipe");
     expect(stdoutPipe).toHaveBeenCalledWith(process.stderr);
     expect(stdoutPipe).not.toHaveBeenCalledWith(process.stdout);
@@ -3892,7 +3916,14 @@ describe("update-cli", () => {
 
     const call = spawnCall();
     expect(call?.[0]).toMatch(/node/);
-    expect(call?.[1]).toEqual([entrypoints[0], "update", "--no-restart", "--yes"]);
+    expect(call?.[1]).toEqual([
+      entrypoints[0],
+      "update",
+      "--no-restart",
+      "--yes",
+      "--timeout",
+      "1800",
+    ]);
     expect(call?.[2]?.stdio).toBe("inherit");
     expect(call?.[2]?.env?.OPENCLAW_UPDATE_POST_CORE).toBe("1");
     expect(call?.[2]?.env?.OPENCLAW_UPDATE_POST_CORE_CHANNEL).toBe("dev");
@@ -3923,6 +3954,8 @@ describe("update-cli", () => {
       "--no-restart",
       "--yes",
       "--accept-capabilities",
+      "--timeout",
+      "1800",
     ]);
   });
 
@@ -3967,6 +4000,8 @@ describe("update-cli", () => {
           "update",
           "--no-restart",
           ...(acceptCapabilities ? ["--accept-capabilities"] : []),
+          "--timeout",
+          "30",
         ]);
       } else {
         expect(spawn).not.toHaveBeenCalled();
@@ -8749,7 +8784,15 @@ describe("update-cli", () => {
       ).toBe("1");
       const postCoreCall = spawnCall();
       expect(postCoreCall?.[0]).toMatch(/node/);
-      expect(postCoreCall?.[1]).toEqual([entryPath, "update", "--json", "--no-restart", "--yes"]);
+      expect(postCoreCall?.[1]).toEqual([
+        entryPath,
+        "update",
+        "--json",
+        "--no-restart",
+        "--yes",
+        "--timeout",
+        "1800",
+      ]);
       expect(postCoreCall?.[2]?.env?.OPENCLAW_UPDATE_POST_CORE).toBe("1");
       expect(updateNpmInstalledPlugins).not.toHaveBeenCalled();
       expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
@@ -14450,6 +14493,8 @@ describe("update-cli", () => {
           "update",
           "--no-restart",
           "--accept-capabilities",
+          "--timeout",
+          "1800",
         ]);
         expectNoSideEffects(syncPluginsForUpdateChannel, updateNpmInstalledPlugins);
         expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);

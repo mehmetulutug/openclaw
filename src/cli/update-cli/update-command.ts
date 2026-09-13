@@ -155,8 +155,7 @@ async function runAdmittedUpdate(
           );
     await withUpdatePreviewSignals(opts, execute);
   } catch (error) {
-    // Execution owns its unwind, including helper-pending rollback and migrated state.
-    // This boundary only terminalizes failures before that owner starts.
+    // Execution owns recovery; only failures before execution starts are terminalized here.
     if (!executionStarted) {
       failUpdateCommandRun(error, run);
     }
@@ -390,8 +389,9 @@ async function updateCommandInternal(
     discoveredRoot,
     installKind,
   } = prepared;
-  const updateStepTimeoutMs = timeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS;
   const run = opts.run!;
+  const updateStepTimeoutMs =
+    timeoutMs ?? run.defaultStepTimeoutMs ?? DEFAULT_UPDATE_STEP_TIMEOUT_MS;
 
   const target =
     initialization?.target ??
@@ -548,7 +548,7 @@ async function updateCommandInternal(
       (await gatewayServiceCommandUsesRoot({ root })) === true;
     const runtimePreflight = await resolvePackageRuntimePreflight({
       target: packageRuntimeTarget,
-      timeoutMs,
+      timeoutMs: updateStepTimeoutMs,
       nodeRunner: managedServiceNodeRunner,
       fallbackNodeRunner: canRefreshManagedServiceNode ? resolveNodeRunner() : undefined,
     });
@@ -707,8 +707,7 @@ async function updateCommandInternal(
       });
   run.executorFence?.assertCurrent();
   if (opts.recovery || rollbackBlockedReason) {
-    // A migrated database belongs to the candidate runtime. The old process
-    // must not reopen it, including during error reporting or outer cleanup.
+    // Only candidate code may reopen migrated state, including during reporting and cleanup.
     recoveryState.ledgerHandoffOwned = true;
     const continued = await continueMigratedUpdateInFreshProcess(
       { ...finalization, rollbackBlockedReason },
