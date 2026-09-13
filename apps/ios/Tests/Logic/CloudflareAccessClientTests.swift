@@ -48,7 +48,9 @@ struct CloudflareAccessClientTests {
         let requests = try Requests([(Data(), self.response(application.origin.url, 200, headers: [
             "Server": "cloudflare", "Cf-Access-Metadata": "metadata-is-not-a-login-challenge",
         ]))])
-        let client = CloudflareAccessClient(request: requests.send)
+        let client = CloudflareAccessClient(request: { request, limit in
+            try await requests.send(request, maximumBytes: limit)
+        })
         #expect(try await client.discover(gatewayURL: application.origin.url) == nil)
         #expect(await requests.requests.count == 1)
     }
@@ -82,7 +84,9 @@ struct CloudflareAccessClientTests {
             (Data(), self.response(application.origin.url, 200, headers: ["Cf-Access-Metadata": metadata])),
             (tokens.jwks, self.response(application.issuer.appendingPathComponent("cdn-cgi/access/certs"), 200)),
         ])
-        let client = CloudflareAccessClient(request: requests.send)
+        let client = CloudflareAccessClient(request: { request, limit in
+            try await requests.send(request, maximumBytes: limit)
+        })
         #expect(try await client.discover(gatewayURL: application.origin.url) == application)
         let sent = await requests.requests
         #expect(sent.map(\.httpMethod) == ["GET", "HEAD", "GET"])
@@ -101,7 +105,9 @@ struct CloudflareAccessClientTests {
                 Data(#"{"user_uuid":"test-subject"}"#.utf8),
                 self.response(application.origin.url.appendingPathComponent("cdn-cgi/access/get-identity"), 200)),
         ])
-        let client = CloudflareAccessClient(request: requests.send)
+        let client = CloudflareAccessClient(request: { request, limit in
+            try await requests.send(request, maximumBytes: limit)
+        })
         let verified = try await client.verifiedSession(token: token, application: application)
         #expect(verified.subject == "test-subject")
         let sent = await requests.requests
@@ -141,7 +147,9 @@ struct CloudflareAccessClientTests {
                 Data(#"{"user_uuid":"different-subject"}"#.utf8),
                 self.response(application.origin.url.appendingPathComponent("cdn-cgi/access/get-identity"), 200)),
         ])
-        let client = CloudflareAccessClient(request: requests.send)
+        let client = CloudflareAccessClient(request: { request, limit in
+            try await requests.send(request, maximumBytes: limit)
+        })
         await #expect(throws: CloudflareAccessError.self) {
             try await client.verifiedSession(token: token, application: application)
         }
