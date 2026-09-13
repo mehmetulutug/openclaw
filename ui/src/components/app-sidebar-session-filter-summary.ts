@@ -12,7 +12,7 @@ import { renderSessionOwnerAvatar, sessionSelfOwner } from "./session-owner-chip
  * filters) turns into the clear icon on hover so the row spends no width on a
  * second affordance.
  */
-export function renderSessionFilterSummary(host: SessionListHost) {
+function renderSessionFilterSummary(host: SessionListHost) {
   const ownerId = host.sessionOwnerFilterActive ? host.sessionOwnerFilterId : null;
   const owner = ownerId
     ? host.sessionOwnerOptions.find((option) => option.id === ownerId)
