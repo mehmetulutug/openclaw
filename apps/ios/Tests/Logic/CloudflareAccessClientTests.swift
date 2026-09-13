@@ -27,14 +27,16 @@ struct CloudflareAccessClientTests {
         for value in [
             "https://gateway.example.test:8443/api?file=one", "wss://gateway.example.test:8443/socket",
         ] {
-            #expect(try session.authorizationHeader(for: #require(URL(string: value))) != nil)
+            let url = try #require(URL(string: value))
+            #expect(session.authorizationHeader(for: url) != nil)
         }
         for value in [
             "https://gateway.example.test/", "https://gateway.example.test:443/",
             "https://other.example.test:8443/", "http://gateway.example.test:8443/",
             "https://user@gateway.example.test:8443/", "https://gateway.example.test:8443/#fragment",
         ] {
-            #expect(try session.authorizationHeader(for: #require(URL(string: value))) == nil)
+            let url = try #require(URL(string: value))
+            #expect(session.authorizationHeader(for: url) == nil)
         }
         #expect(session.authorizationHeader(for: session.origin.url, now: session.expiresAt) == nil)
         #expect(!String(describing: session).contains("test-subject"))

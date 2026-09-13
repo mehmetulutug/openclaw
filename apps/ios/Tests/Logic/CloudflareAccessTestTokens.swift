@@ -58,13 +58,16 @@ struct CloudflareAccessTestTokens {
     }
 
     private static func readDER(_ bytes: inout ArraySlice<UInt8>, tag: UInt8) throws -> [UInt8] {
-        #expect(bytes.popFirst() == tag)
-        let first = try #require(bytes.popFirst())
+        let actualTag = bytes.popFirst()
+        #expect(actualTag == tag)
+        let lengthByte = bytes.popFirst()
+        let first = try #require(lengthByte)
         var length = Int(first)
         if first >= 128 {
             length = 0
             for _ in 0..<(first & 0x7F) {
-                length = try length * 256 + Int(#require(bytes.popFirst()))
+                let next = bytes.popFirst()
+                length = try length * 256 + Int(#require(next))
             }
         }
         #expect(bytes.count >= length)
