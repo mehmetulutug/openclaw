@@ -8,6 +8,7 @@ import { MAX_DATE_TIMESTAMP_MS } from "openclaw/plugin-sdk/number-runtime";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PersistedWorkboardCard, WorkboardCardStore } from "./persistence-types.js";
+import { createWorkboardSqliteKernel } from "./sqlite-store-kernel.js";
 import { createWorkboardSqliteStores } from "./sqlite-store.js";
 import { secondsToDurationMs } from "./store-constants.js";
 import { normalizeExecution } from "./store-normalizers.js";
@@ -17,6 +18,8 @@ import {
   createWorkboardSqliteTestStore,
   sqliteTestAuxStores,
 } from "./test/sqlite-store.js";
+
+const workerModuleUrl = new URL("./sqlite-store.worker.ts", import.meta.url);
 
 function createSignal() {
   let resolve = () => {};
@@ -153,16 +156,16 @@ function createPausedCardStore(delegate: WorkboardCardStore) {
 function createConcurrentSqliteHarness(prefix: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const dbPath = path.join(dir, "workboard.sqlite");
-  const operationStores = createWorkboardSqliteStores({ dbPath });
-  const hostStores = createWorkboardSqliteStores({ dbPath });
+  const operationStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+  const hostStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
   const paused = createPausedCardStore(operationStores.cards);
   return {
     operation: new WorkboardStore(paused.store, sqliteTestAuxStores(operationStores)),
     host: new WorkboardStore(hostStores.cards, sqliteTestAuxStores(hostStores)),
     paused,
-    close() {
-      hostStores.close();
-      operationStores.close();
+    async close() {
+      await hostStores.close();
+      await operationStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -207,11 +210,15 @@ function explainWorkboardQueryPlan(
     .join("\n");
 }
 
-function withWorkboardSqliteDatabase(prefix: string, run: (db: DatabaseSync) => void): void {
+async function withWorkboardSqliteDatabase(
+  prefix: string,
+  run: (db: DatabaseSync) => void,
+): Promise<void> {
   const dir = tempDirs.make(prefix);
   const dbPath = path.join(dir, "workboard.sqlite");
-  const stores = createWorkboardSqliteStores({ dbPath });
-  stores.close();
+  const stores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+  await stores.ready;
+  await stores.close();
   const db = new DatabaseSync(dbPath);
   try {
     run(db);
@@ -272,35 +279,37 @@ describe("WorkboardStore", () => {
   it("emits when another sqlite connection commits", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-change-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const readerStores = createWorkboardSqliteStores({ dbPath });
-    const writerStores = createWorkboardSqliteStores({ dbPath });
+    const readerStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const writerStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     try {
       const reader = new WorkboardStore(readerStores.cards, {
         boards: readerStores.boards,
         subscriptions: readerStores.subscriptions,
         attachments: readerStores.attachments,
+        ready: readerStores.ready,
         dataVersion: readerStores.dataVersion,
       });
       const writer = new WorkboardStore(writerStores.cards, {
         boards: writerStores.boards,
         subscriptions: writerStores.subscriptions,
         attachments: writerStores.attachments,
+        ready: writerStores.ready,
         dataVersion: writerStores.dataVersion,
       });
       const changes = vi.fn();
       reader.subscribeChanges(changes);
 
-      expect(reader.reconcileExternalChanges()).toBe(false);
+      expect(await reader.reconcileExternalChanges()).toBe(false);
       await writer.create({ title: "External" });
-      expect(reader.reconcileExternalChanges()).toBe(true);
-      expect(reader.reconcileExternalChanges()).toBe(false);
+      expect(await reader.reconcileExternalChanges()).toBe(true);
+      expect(await reader.reconcileExternalChanges()).toBe(false);
       expect(changes).toHaveBeenCalledOnce();
       await expect(reader.list()).resolves.toEqual([
         expect.objectContaining({ title: "External" }),
       ]);
     } finally {
-      writerStores.close();
-      readerStores.close();
+      await writerStores.close();
+      await readerStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -308,8 +317,8 @@ describe("WorkboardStore", () => {
   it("rejects stale card edits across sqlite connections", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-cas-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const firstStores = createWorkboardSqliteStores({ dbPath });
-    const secondStores = createWorkboardSqliteStores({ dbPath });
+    const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const first = new WorkboardStore(firstStores.cards, sqliteTestAuxStores(firstStores));
     const second = new WorkboardStore(secondStores.cards, sqliteTestAuxStores(secondStores));
     try {
@@ -339,8 +348,8 @@ describe("WorkboardStore", () => {
         updatedAt: moved.updatedAt,
       });
     } finally {
-      secondStores.close();
-      firstStores.close();
+      await secondStores.close();
+      await firstStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -348,8 +357,8 @@ describe("WorkboardStore", () => {
   it("deletes a sqlite card only at its exact updatedAt version", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-delete-cas-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const firstStores = createWorkboardSqliteStores({ dbPath });
-    const secondStores = createWorkboardSqliteStores({ dbPath });
+    const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const first = new WorkboardStore(firstStores.cards, sqliteTestAuxStores(firstStores));
     const second = new WorkboardStore(secondStores.cards, sqliteTestAuxStores(secondStores));
     try {
@@ -367,8 +376,8 @@ describe("WorkboardStore", () => {
       );
       await expect(first.get(created.id)).resolves.toBeUndefined();
     } finally {
-      secondStores.close();
-      firstStores.close();
+      await secondStores.close();
+      await firstStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -378,8 +387,8 @@ describe("WorkboardStore", () => {
     async (owner) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), `openclaw-workboard-${owner}-race-`));
       const dbPath = path.join(dir, "workboard.sqlite");
-      const firstStores = createWorkboardSqliteStores({ dbPath });
-      const secondStores = createWorkboardSqliteStores({ dbPath });
+      const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+      const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       const paused = createPausedCardStore(firstStores.cards);
       const first = new WorkboardStore(paused.store, {
         boards: firstStores.boards,
@@ -446,8 +455,8 @@ describe("WorkboardStore", () => {
           });
         }
       } finally {
-        secondStores.close();
-        firstStores.close();
+        await secondStores.close();
+        await firstStores.close();
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
@@ -456,8 +465,8 @@ describe("WorkboardStore", () => {
   it("converges concurrent session captures from independent sqlite hosts", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-capture-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const firstStores = createWorkboardSqliteStores({ dbPath });
-    const secondStores = createWorkboardSqliteStores({ dbPath });
+    const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const first = new WorkboardStore(firstStores.cards, sqliteTestAuxStores(firstStores));
     const second = new WorkboardStore(secondStores.cards, sqliteTestAuxStores(secondStores));
     try {
@@ -475,8 +484,8 @@ describe("WorkboardStore", () => {
       expect(["ops", "other"]).toContain(left.metadata?.automation?.boardId);
       await expect(first.list()).resolves.toEqual([left]);
     } finally {
-      secondStores.close();
-      firstStores.close();
+      await secondStores.close();
+      await firstStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -484,8 +493,8 @@ describe("WorkboardStore", () => {
   it("converges concurrent archived session restores across sqlite hosts", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-capture-restore-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const firstStores = createWorkboardSqliteStores({ dbPath });
-    const secondStores = createWorkboardSqliteStores({ dbPath });
+    const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const paused = createPausedCardStore(firstStores.cards);
     const first = new WorkboardStore(paused.store, sqliteTestAuxStores(firstStores));
     const second = new WorkboardStore(secondStores.cards, sqliteTestAuxStores(secondStores));
@@ -505,8 +514,8 @@ describe("WorkboardStore", () => {
       expect(firstResult.metadata?.archivedAt).toBeUndefined();
       await expect(first.list()).resolves.toEqual([firstResult]);
     } finally {
-      secondStores.close();
-      firstStores.close();
+      await secondStores.close();
+      await firstStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -514,8 +523,8 @@ describe("WorkboardStore", () => {
   it("allows only one cross-host claim per owner", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-claim-race-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const firstStores = createWorkboardSqliteStores({ dbPath });
-    const secondStores = createWorkboardSqliteStores({ dbPath });
+    const firstStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    const secondStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const first = new WorkboardStore(firstStores.cards, sqliteTestAuxStores(firstStores));
     const second = new WorkboardStore(secondStores.cards, sqliteTestAuxStores(secondStores));
     try {
@@ -535,8 +544,8 @@ describe("WorkboardStore", () => {
       expect(claims.filter((claim) => claim.status === "rejected")).toHaveLength(1);
       expect((await first.list()).filter((card) => card.status === "running")).toHaveLength(1);
     } finally {
-      secondStores.close();
-      firstStores.close();
+      await secondStores.close();
+      await firstStores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -564,8 +573,8 @@ describe("WorkboardStore", () => {
     expect(restored.metadata?.archivedAt).toBeUndefined();
   });
 
-  it("uses card child indexes for per-card ordered reads", () => {
-    withWorkboardSqliteDatabase("openclaw-workboard-index-read-", (db) => {
+  it("uses card child indexes for per-card ordered reads", async () => {
+    await withWorkboardSqliteDatabase("openclaw-workboard-index-read-", (db) => {
       for (const [table, index] of WORKBOARD_CARD_CHILD_INDEXES) {
         const plan = explainWorkboardQueryPlan(
           db,
@@ -578,8 +587,8 @@ describe("WorkboardStore", () => {
     });
   });
 
-  it("uses card child indexes for whole-board ordered scans", () => {
-    withWorkboardSqliteDatabase("openclaw-workboard-index-scan-", (db) => {
+  it("uses card child indexes for whole-board ordered scans", async () => {
+    await withWorkboardSqliteDatabase("openclaw-workboard-index-scan-", (db) => {
       for (const [table, index] of WORKBOARD_CARD_CHILD_INDEXES) {
         const plan = explainWorkboardQueryPlan(
           db,
@@ -591,8 +600,8 @@ describe("WorkboardStore", () => {
     });
   });
 
-  it("uses card child indexes for parent-card cascades", () => {
-    withWorkboardSqliteDatabase("openclaw-workboard-index-cascade-", (db) => {
+  it("uses card child indexes for parent-card cascades", async () => {
+    await withWorkboardSqliteDatabase("openclaw-workboard-index-cascade-", (db) => {
       db.exec("PRAGMA foreign_keys = ON");
       const plan = explainWorkboardQueryPlan(db, "DELETE FROM workboard_cards WHERE id = ?", [
         "card-1",
@@ -603,11 +612,12 @@ describe("WorkboardStore", () => {
     });
   });
 
-  it("restores dropped card child indexes without changing the schema version", () => {
+  it("restores dropped card child indexes without changing the schema version", async () => {
     const dir = tempDirs.make("openclaw-workboard-index-reopen-");
     const dbPath = path.join(dir, "workboard.sqlite");
-    const initialized = createWorkboardSqliteStores({ dbPath });
-    initialized.close();
+    const initialized = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    await initialized.ready;
+    await initialized.close();
     const db = new DatabaseSync(dbPath);
     let initialMigrationIds: Array<{ id: string }>;
     try {
@@ -621,8 +631,9 @@ describe("WorkboardStore", () => {
       db.close();
     }
 
-    const reopened = createWorkboardSqliteStores({ dbPath });
-    reopened.close();
+    const reopened = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    await reopened.ready;
+    await reopened.close();
     const verified = new DatabaseSync(dbPath, { readOnly: true });
     try {
       const indexes = new Set(
@@ -650,7 +661,7 @@ describe("WorkboardStore", () => {
       fs.chmodSync(dir, 0o755);
     }
     try {
-      const stores = createWorkboardSqliteStores({ dbPath });
+      const stores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       const store = new WorkboardStore(stores.cards, {
         boards: stores.boards,
         subscriptions: stores.subscriptions,
@@ -718,7 +729,7 @@ describe("WorkboardStore", () => {
           }
         }
       }
-      stores.close();
+      await stores.close();
 
       const rawDb = new DatabaseSync(dbPath);
       expect(rawDb.prepare("PRAGMA journal_mode").get()).toMatchObject({
@@ -742,7 +753,7 @@ describe("WorkboardStore", () => {
       ).toThrow();
       rawDb.close();
 
-      const reopenedStores = createWorkboardSqliteStores({ dbPath });
+      const reopenedStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       const reopened = new WorkboardStore(reopenedStores.cards, {
         boards: reopenedStores.boards,
         subscriptions: reopenedStores.subscriptions,
@@ -788,7 +799,7 @@ describe("WorkboardStore", () => {
       expect(await reopened.listNotificationSubscriptions({ boardId: board.id })).toMatchObject({
         subscriptions: [expect.objectContaining({ id: subscription.id })],
       });
-      reopenedStores.close();
+      await reopenedStores.close();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -799,7 +810,7 @@ describe("WorkboardStore", () => {
     const dbPath = path.join(dir, "workboard.sqlite");
     try {
       let cardId = "";
-      const initialStores = createWorkboardSqliteStores({ dbPath });
+      const initialStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       try {
         const initial = new WorkboardStore(initialStores.cards, {
           boards: initialStores.boards,
@@ -817,7 +828,7 @@ describe("WorkboardStore", () => {
         });
         await initial.archive(archived.id, true);
       } finally {
-        initialStores.close();
+        await initialStores.close();
       }
 
       const rawDb = new DatabaseSync(dbPath);
@@ -827,7 +838,7 @@ describe("WorkboardStore", () => {
         rawDb.close();
       }
 
-      const reopenedStores = createWorkboardSqliteStores({ dbPath });
+      const reopenedStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       try {
         const reopened = new WorkboardStore(reopenedStores.cards, {
           boards: reopenedStores.boards,
@@ -848,7 +859,7 @@ describe("WorkboardStore", () => {
           ]),
         });
       } finally {
-        reopenedStores.close();
+        await reopenedStores.close();
       }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -858,8 +869,9 @@ describe("WorkboardStore", () => {
   it("migrates a version 2 workboard table to STRICT without losing rows", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-strict-migration-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const initialized = createWorkboardSqliteStores({ dbPath });
-    initialized.close();
+    const initialized = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
+    await initialized.ready;
+    await initialized.close();
     const legacy = new DatabaseSync(dbPath);
     try {
       legacy.exec(`
@@ -897,13 +909,13 @@ describe("WorkboardStore", () => {
     }
 
     try {
-      const migratedStores = createWorkboardSqliteStores({ dbPath });
+      const migratedStores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
       try {
         await expect(migratedStores.boards.lookup("legacy")).resolves.toMatchObject({
           board: { id: "legacy", name: "Legacy board" },
         });
       } finally {
-        migratedStores.close();
+        await migratedStores.close();
       }
       const migrated = new DatabaseSync(dbPath, { readOnly: true });
       try {
@@ -930,7 +942,7 @@ describe("WorkboardStore", () => {
     const dbPath = path.join(dir, "workboard.sqlite");
     const statfs = vi.spyOn(fs, "statfsSync").mockReturnValue(statfsFixture(0xff534d42));
     try {
-      const stores = createWorkboardSqliteStores({ dbPath });
+      const stores = createWorkboardSqliteKernel(dbPath);
       stores.close();
 
       const rawDb = new DatabaseSync(dbPath);
@@ -2870,7 +2882,7 @@ describe("WorkboardStore", () => {
   it("heals oversized persisted notifications and keeps dispatching sibling cards", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-notification-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const stores = createWorkboardSqliteStores({ dbPath });
+    const stores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     try {
       const store = new WorkboardStore(stores.cards, sqliteTestAuxStores(stores));
       const poisoned = await store.create({ title: "Oversized notification", status: "ready" });
@@ -2906,7 +2918,7 @@ describe("WorkboardStore", () => {
         verifyDb.close();
       }
     } finally {
-      stores.close();
+      await stores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -4549,7 +4561,7 @@ describe("WorkboardStore", () => {
   it("rolls back every task-owned decomposition write in sqlite when uncontended", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-workboard-decompose-control-"));
     const dbPath = path.join(dir, "workboard.sqlite");
-    const stores = createWorkboardSqliteStores({ dbPath });
+    const stores = createWorkboardSqliteStores({ dbPath, workerModuleUrl });
     const store = new WorkboardStore(stores.cards, sqliteTestAuxStores(stores));
     try {
       const parent = await store.create({ title: "Parent" });
@@ -4575,7 +4587,7 @@ describe("WorkboardStore", () => {
       expectSameCardState(await store.get(parent.id), parent);
       expectSameCardState(await store.get(reusedChild.id), reusedChild);
     } finally {
-      stores.close();
+      await stores.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -4619,7 +4631,7 @@ describe("WorkboardStore", () => {
       ]);
       expectSameCardState(await host.get(reusedChild.id), reusedChild);
     } finally {
-      harness.close();
+      await harness.close();
     }
   });
 
@@ -4675,7 +4687,7 @@ describe("WorkboardStore", () => {
         );
         expect(rolledBackChild?.events?.map((event) => event.kind)).toEqual(["created", "edited"]);
       } finally {
-        harness.close();
+        await harness.close();
       }
     },
   );
@@ -4712,7 +4724,7 @@ describe("WorkboardStore", () => {
         "edited",
       ]);
     } finally {
-      harness.close();
+      await harness.close();
     }
   });
 
@@ -4754,7 +4766,7 @@ describe("WorkboardStore", () => {
       expectSameCardState(await host.get(firstParent.id), firstParent);
       expectSameCardState(await host.get(secondParent.id), secondParent);
     } finally {
-      harness.close();
+      await harness.close();
     }
   });
 

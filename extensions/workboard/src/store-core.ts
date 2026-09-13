@@ -106,11 +106,12 @@ export class WorkboardCoreStore extends WorkboardStoreRuntime {
       boards: WorkboardKeyedStore<PersistedWorkboardBoard>;
       subscriptions: WorkboardKeyedStore<PersistedWorkboardNotificationSubscription>;
       attachments: WorkboardKeyedStore<PersistedWorkboardAttachment>;
-      dataVersion?: () => number;
-      close?: () => void;
+      ready?: Promise<number>;
+      dataVersion?: () => number | Promise<number>;
+      close?: () => void | Promise<void>;
     },
   ) {
-    super(stores.dataVersion, stores.close);
+    super(stores.dataVersion, stores.close, stores.ready);
     this.store = this.trackCardStore(store);
     this.boardStore = this.track(stores.boards);
     this.subscriptionStore = this.track(stores.subscriptions, { notifyChanges: false });
